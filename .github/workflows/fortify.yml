@@ -40,14 +40,14 @@ jobs:
           distribution: 'temurin'
 
       # Prepare source+dependencies for upload.  ScanCentral Client documentation is located at https://www.microfocus.com/documentation/fortify-software-security-center/
-      #- name: Download Fortify ScanCentral Client
-      #  uses: fortify/gha-setup-scancentral-client@v2
-      #  with:
-      #    version: 23.1.0
-      #- name: Package Code + Dependencies
-      #  run: scancentral package $PACKAGE_OPTS -o package.zip
-      #  env:
-      #    PACKAGE_OPTS: "-bt mvn -oss"
+      - name: Download Fortify ScanCentral Client
+        uses: fortify/gha-setup-scancentral-client@v2
+        with:
+          version: 23.1.0
+      - name: Package Code + Dependencies
+        run: scancentral package $PACKAGE_OPTS -o package.zip
+        env:
+          PACKAGE_OPTS: "-bt mvn -oss"
 
       # Start Fortify on Demand SAST scan and wait until results complete. For more information on FoDUploader commands, see https://github.com/fod-dev/fod-uploader-java
       - name: Download Fortify on Demand Universal CI Tool
@@ -63,3 +63,19 @@ jobs:
           FOD_RELEASE_ID: ${{ secrets.FOD_RELEASE_ID }}
           FOD_UPLOADER_OPTS: "-ep 2 -pp 0 -I 1 -apf"
           FOD_UPLOADER_NOTES: 'Triggered by GitHub Actions (${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})'
+
+      # Once scan completes, pull SAST issues from Fortify on Demand and generate SARIF output.
+      - name: Export results to GitHub-optimized SARIF
+        uses: fortify/gha-export-vulnerabilities@v1
+        with:
+          fod_base_url: "https://ams.fortify.com/"
+          fod_tenant: ${{ secrets.FOD_TENANT }}
+          fod_user: ${{ secrets.FOD_USER }}
+          fod_password: ${{ secrets.FOD_PAT }}
+          fod_release_id: ${{ secrets.FOD_RELEASE_ID }}
+
+      # Import Fortify on Demand results to GitHub Security Code Scanning
+      - name: Import Results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: ./gh-fortify-sast.sarif
