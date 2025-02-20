@@ -9,7 +9,7 @@
 # an existing application in your Fortify on Demand tenant. Additional information is available in the comments throughout the workflow, the   #
 # documentation for the Fortify actions used, and the Fortify on Demand / ScanCentral Client product documentation. If you need additional     #
 # assistance with configuration, feel free to create a help ticket in the Fortify on Demand portal.                                            #
-################################################################################################################################################
+#################################################################################################################################################
 
 name: Fortify on Demand Scan
 
