@@ -4,7 +4,9 @@ trigger:
 - main
 
 pool:
-  vmImage: ubuntu-latest
+  name: Default
+  demands:
+  - agent.name -equals DESKTOP-DJKAGKC
 
 steps:
 - task: Maven@3
