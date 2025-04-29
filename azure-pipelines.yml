@@ -17,3 +17,18 @@ steps:
     publishJUnitResults: true
     testResultsFiles: '**/surefire-reports/TEST-*.xml'
     goals: 'package'
+    
+- task: FortifyOnDemandStatic@9
+  inputs:
+    FortifyProjects: 
+    FodConnection: 'FoD_AzureDevOps'
+    ReleaseOptions: '0'
+    ReleaseId: 1457130
+    EntitlementSelection: '0'
+    Entitlement: 13738
+    EntitlementPreference: '2'
+    OverrideScanSettings: '2'
+    InProgressScanActionType: '2'
+    RemediationScanPreference: '0'
+    BuildType: 'mvn'
+    BuildCommand: 'clean package'
