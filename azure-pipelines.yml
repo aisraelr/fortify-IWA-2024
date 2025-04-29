@@ -23,12 +23,12 @@ steps:
 - task: FortifyOnDemandStatic@9
   inputs:
     FortifyProjects: 
-    FodConnection: 'SanboxFoD_AzureDevOps'
+    FodConnection: 'FoD_AzureDevOps'
     ReleaseOptions: '0'
-    ReleaseId: 22132
+    ReleaseId: 1457130
     EntitlementSelection: '0'
-    Entitlement: 425
-    EntitlementPreference: '2'
+    Entitlement: 13738
+    EntitlementPreference: '3'
     OverrideScanSettings: '2'
     InProgressScanActionType: '2'
     RemediationScanPreference: '0'
