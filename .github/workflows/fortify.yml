@@ -56,6 +56,13 @@ jobs:
               version: 23.1.0
       - name: Perform SAST and OSS Scan
         run: java -jar $FOD_UPLOAD_JAR -z package.zip -aurl $FOD_API_URL -purl $FOD_URL -rid "$FOD_RELEASE_ID" -tc "$FOD_TENANT" -uc "$FOD_USER" "$FOD_PAT" $FOD_UPLOADER_OPTS -n "$FOD_UPLOADER_NOTES"
+             |
+              echo "TENANT_ID=${{ secrets.FOD_TENANT }}             
+              echo "RELEASE_ID=${{ secrets.FOD_RELEASE_ID }}"
+              echo "USER=${{ secrets.FOD_USER }}"
+              echo "RELEASE_ID=${{ env.FOD_RELEASE_ID }}"
+              echo "FOD_URL=${{ env.FOD_API_URL }}"
+              echo "FOD_API_URL=${{ env.FOD_API_URL }}"
         env:
           FOD_URL: "https://ams.fortify.com/"
           FOD_API_URL: "https://api.ams.fortify.com/"
