@@ -51,7 +51,7 @@ jobs:
 
       # Start Fortify on Demand SAST scan and wait until results complete. For more information on FoDUploader commands, see https://github.com/fod-dev/fod-uploader-java
       - name: Download Fortify on Demand Universal CI Tool
-        uses: fortify/gha-setup-fod-uploader@v1.1.3
+        uses: fortify/gha-setup-fod-uploader@v1
       - name: Perform SAST and OSS Scan
         run: java -jar $FOD_UPLOAD_JAR -z package.zip -aurl $FOD_API_URL -purl $FOD_URL -rid "$FOD_RELEASE_ID" -tc "$FOD_TENANT" -uc "$FOD_USER" "$FOD_PAT" $FOD_UPLOADER_OPTS -n "$FOD_UPLOADER_NOTES"
         env:
