@@ -25,10 +25,10 @@ steps:
     FortifyProjects: 
     FodConnection: 'FoD_AzureDevOps'
     ReleaseOptions: '0'
-    ReleaseId: 1099145
+    ReleaseId: 1457130
     EntitlementSelection: '0'
-    Entitlement: 12880
-    EntitlementPreference: '3'
+    Entitlement: 13738
+    EntitlementPreference: '2'
     OverrideScanSettings: '2'
     InProgressScanActionType: '2'
     RemediationScanPreference: '0'
