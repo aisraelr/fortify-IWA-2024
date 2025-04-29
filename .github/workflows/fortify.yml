@@ -55,8 +55,7 @@ jobs:
         with:
               version: 23.1.0
       - name: Perform SAST and OSS Scan
-        run: java -jar $FOD_UPLOAD_JAR -z package.zip -aurl $FOD_API_URL -purl $FOD_URL -rid "$FOD_RELEASE_ID" -tc "$FOD_TENANT" -uc "$FOD_USER" "$FOD_PAT" $FOD_UPLOADER_OPTS -n "$FOD_UPLOADER_NOTES"
-             |
+        run: |
               echo "TENANT_ID=${{ secrets.FOD_TENANT }}             
               echo "RELEASE_ID=${{ secrets.FOD_RELEASE_ID }}"
               echo "USER=${{ secrets.FOD_USER }}"
