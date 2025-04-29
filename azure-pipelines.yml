@@ -34,3 +34,4 @@ steps:
     RemediationScanPreference: '0'
     BuildType: 'mvn'
     BuildCommand: 'clean package'
+    PolicyFailAction: '0'
