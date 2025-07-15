@@ -1,0 +1,46 @@
+name: Java CI with Debricked Scan
+
+on: [push, pull_request]
+
+jobs:
+  build-and-test:
+    name: Build and Unit Test (Maven)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17' # Cambia si tu proyecto usa otra versión
+
+      - name: Build with Maven
+        run: mvn clean install -B
+
+      - name: Run Unit Tests
+        run: mvn test -B
+
+  debricked-scan:
+    name: Debricked Scan and Policy Validation
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Debricked cache
+        uses: debricked/actions/cache@v4
+
+      - name: Debricked scan (non-docker)
+        uses: debricked/actions/scan-non-docker@v4
+        env:
+          DEBRICKED_TOKEN: ${{ secrets.DEBRICKED_TOKEN }}
+
+      - name: Check policy violations
+        uses: debricked/actions-policy-fail@v4
+        env:
+          DEBRICKED_TOKEN: ${{ secrets.DEBRICKED_TOKEN }}
