@@ -1,28 +1,30 @@
-name: CI with Debricked Scan
+name: Java CI with Debricked Scan
 
 on: [push, pull_request]
 
 jobs:
   build-and-test:
-    name: Build and Unit Test
+    name: Build and Unit Test (Maven)
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Node.js (example)
-        uses: actions/setup-node@v4
+      - name: Set up Java
+        uses: actions/setup-java@v4
         with:
-          node-version: '18'
+          distribution: 'temurin'
+          java-version: '17' # Ajusta si tu proyecto usa otra versión
 
-      - name: Install dependencies
-        run: npm install
+      - name: Build with Maven
+        run: mvn clean install -B
 
-      - name: Run unit tests
-        run: npm test
+      - name: Run Unit Tests
+        run: mvn test -B
 
   debricked-scan:
-    name: Debricked Scan and Policy Check
+    name: Debricked Scan and Validation
     runs-on: ubuntu-latest
     needs: build-and-test
 
@@ -41,14 +43,14 @@ jobs:
       - name: Wait for scan and fetch report
         id: get-scan-result
         run: |
-          echo "Fetching vulnerabilities from Debricked API..."
+          echo "Fetching scan results from Debricked..."
           SCAN_ID=$(cat .debricked/scan_id)
           echo "Scan ID: $SCAN_ID"
 
           RESPONSE=$(curl -s -X GET "https://debricked.com/api/1.0/open/vulnerabilities/overview?scanId=$SCAN_ID" \
             -H "Authorization: Bearer ${{ secrets.DEBRICKED_TOKEN }}")
 
-          echo "Full response: $RESPONSE"
+          echo "$RESPONSE"
 
           CRITICAL=$(echo "$RESPONSE" | jq '.data.critical')
           HIGH=$(echo "$RESPONSE" | jq '.data.high')
@@ -56,8 +58,9 @@ jobs:
           echo "CRITICAL=$CRITICAL" >> $GITHUB_ENV
           echo "HIGH=$HIGH" >> $GITHUB_ENV
 
-      - name: Validate critical and high issues
+      - name: Validate vulnerabilities
         run: |
+          echo "Validating vulnerability thresholds..."
           echo "Critical issues: $CRITICAL"
           echo "High issues: $HIGH"
 
@@ -70,7 +73,6 @@ jobs:
             echo "❌ Too many high severity issues ($HIGH). Failing pipeline."
             exit 1
           fi
-
         env:
           CRITICAL: ${{ env.CRITICAL }}
           HIGH: ${{ env.HIGH }}
