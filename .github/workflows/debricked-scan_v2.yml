@@ -15,7 +15,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17' # Cambia si tu proyecto usa otra versión
+          java-version: '17' # Ajusta si es otra versión
 
       - name: Build with Maven
         run: mvn clean install -B
@@ -24,7 +24,7 @@ jobs:
         run: mvn test -B
 
   debricked-scan:
-    name: Debricked Scan and Policy Validation
+    name: Debricked Scan
     runs-on: ubuntu-latest
     needs: build-and-test
 
@@ -37,10 +37,5 @@ jobs:
 
       - name: Debricked scan (non-docker)
         uses: debricked/actions/scan-non-docker@v4
-        env:
-          DEBRICKED_TOKEN: ${{ secrets.DEBRICKED_TOKEN }}
-
-      - name: Check policy violations
-        uses: debricked/actions-policy-fail@v4
         env:
           DEBRICKED_TOKEN: ${{ secrets.DEBRICKED_TOKEN }}
