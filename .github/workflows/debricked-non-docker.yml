@@ -1,4 +1,4 @@
-name: Debricked scan
+name: Debricked scan non-docker
 
 on: [push]
 
