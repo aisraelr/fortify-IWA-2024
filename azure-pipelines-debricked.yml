@@ -11,8 +11,9 @@ steps:
 
 - script: |
     echo "Authenticating with Debricked..."
-    C:\Temp\cli_windows_x86_64\debricked.exe auth token --access-token $(DEBRICKED_TOKEN) || exit 1
+    C:\Temp\cli_windows_x86_64\debricked.exe auth login --access-token $(DEBRICKED_TOKEN) || exit 1
 
     echo "Scanning code..."
     C:\Temp\cli_windows_x86_64\debricked.exe scan --directory .
   displayName: 'Debricked scan with binary CLI'
+
