@@ -10,7 +10,9 @@ steps:
 - checkout: self
 
 - script: |
+    set PATH=C:\Temp\cli_windows_x86_64;%PATH%
     echo "Running Debricked scan only..."
     debricked login --token $(DEBRICKED_TOKEN)
     debricked scan --ci azureDevOps --directory .
   displayName: 'Run Debricked CLI scan'
+
