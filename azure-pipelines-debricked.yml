@@ -10,10 +10,7 @@ steps:
 - checkout: self
 
 - script: |
-    echo "Setting environment variable for Debricked token"
+    echo Running Debricked scan using pre-installed CLI
     set DEBRICKED_TOKEN=$(DEBRICKED_TOKEN)
-
-    echo "Running Debricked scan without interactive login..."
-    C:\Temp\cli_windows_x86_64\debricked.exe scan --directory .
-  displayName: 'Debricked scan using token env var'
-
+    C:\Temp\cli_windows_x86_64\debricked.exe scan .
+  displayName: 'Debricked scan with pre-installed CLI'
