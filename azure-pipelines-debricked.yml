@@ -1,0 +1,16 @@
+trigger:
+- none  # No se ejecuta automáticamente
+
+pool:
+  name: Default
+  demands:
+    - agent.name -equals DESKTOP-DJKAGKC
+
+steps:
+- checkout: self
+
+- script: |
+    echo "Running Debricked scan only..."
+    debricked login --token $(DEBRICKED_TOKEN)
+    debricked scan --ci azureDevOps --directory .
+  displayName: 'Run Debricked CLI scan'
