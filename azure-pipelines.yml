@@ -35,22 +35,3 @@ steps:
     BuildType: 'mvn'
     BuildCommand: 'clean package'
     PolicyFailAction: '0'
-
-# Debricked
-- task: UsePythonVersion@0
-  inputs:
-    versionSpec: '3.x'
-    addToPath: true
-
-- script: |
-    pip install --upgrade pip
-    pip install debricked-cli
-  displayName: 'Install Debricked CLI'
-
-- script: |
-    echo "Logging into Debricked..."
-    debricked login --token $(DEBRICKED_TOKEN)
-
-    echo "Running Debricked scan..."
-    debricked scan --ci azureDevOps --directory .
-  displayName: 'Run Debricked CLI scan'    
