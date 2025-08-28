@@ -41,28 +41,13 @@ jobs:
         env:
           DEBRICKED_TOKEN: ${{ secrets.DEBRICKED_TOKEN }}
 
-      - name: Get Debricked JWT
-        id: get-jwt
-        run: |
-          JWT=$(curl -s -X POST "https://debricked.com/api/login_check" \
-            -H "Content-Type: application/json" \
-            -d "{\"token\":\"${{ secrets.DEBRICKED_TOKEN }}\"}" | jq -r '.token')
-      
-          if [ "$JWT" = "null" ] || [ -z "$JWT" ]; then
-            echo "❌ No se pudo obtener JWT de Debricked"
-            exit 1
-          fi
-      
-          echo "JWT=$JWT" >> $GITHUB_ENV
-
-
       - name: Fetch Debricked vulnerabilities
         run: |
           COMMIT_SHA="${{ github.sha }}"
           echo "Fetching results for commit: $COMMIT_SHA"
       
-          RESPONSE=$(curl -s -X GET "https://debricked.com/api/1.0/open/vulnerabilities/overview?commit=$COMMIT_SHA" \
-            -H "Authorization: Bearer $JWT")
+          RESPONSE=$(curl -s -X GET "https://debricked.com/api/1.0/open/scans/commits/$COMMIT_SHA/vulnerabilities" \
+            -H "Authorization: token ${{ secrets.DEBRICKED_TOKEN }}")
       
           echo "$RESPONSE"
       
