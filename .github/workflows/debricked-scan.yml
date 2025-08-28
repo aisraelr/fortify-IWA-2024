@@ -7,7 +7,6 @@ jobs:
     name: Build and Unit Test (Maven)
     runs-on: ubuntu-latest
 
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -41,6 +40,23 @@ jobs:
         uses: debricked/actions/scan-non-docker@v4
         env:
           DEBRICKED_TOKEN: ${{ secrets.DEBRICKED_TOKEN }}
+
+      - name: Fetch Debricked scan results by commit
+        run: |
+          COMMIT_SHA="${{ github.sha }}"
+          echo "Fetching results for commit: $COMMIT_SHA"
+      
+          RESPONSE=$(curl -s -X GET "https://debricked.com/api/1.0/open/vulnerabilities/overview?commit=$COMMIT_SHA" \
+            -H "Authorization: Bearer ${{ secrets.DEBRICKED_TOKEN }}")
+      
+          echo "$RESPONSE"
+      
+          CRITICAL=$(echo "$RESPONSE" | jq '.data.critical')
+          HIGH=$(echo "$RESPONSE" | jq '.data.high')
+      
+          echo "CRITICAL=$CRITICAL" >> $GITHUB_ENV
+          echo "HIGH=$HIGH" >> $GITHUB_ENV
+      
 
       - name: Wait for scan and fetch report
         id: get-scan-result
