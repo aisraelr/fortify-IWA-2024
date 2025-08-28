@@ -36,8 +36,8 @@ jobs:
       - name: Debricked cache
         uses: debricked/actions/cache@v4
 
-      - name: Debricked scan (non-docker)
-        uses: debricked/actions/scan-non-docker@v4
+      - name: Debricked scan
+        uses: debricked/actions/scan@v4
         env:
           DEBRICKED_TOKEN: ${{ secrets.DEBRICKED_TOKEN }}
 
