@@ -5,8 +5,7 @@ trigger:
  
 pool:
   name: Default
-  demands:
-  - agent.name -equals DESKTOP-DJKAGKC
+  vmImage: 'ubuntu-latest'
  
 steps:
 - task: Maven@3
