@@ -41,13 +41,14 @@ jobs:
         env:
           DEBRICKED_TOKEN: ${{ secrets.DEBRICKED_TOKEN }}
 
-      - name: Fetch Debricked scan results by commit
+
+      - name: Fetch Debricked vulnerabilities
         run: |
           COMMIT_SHA="${{ github.sha }}"
           echo "Fetching results for commit: $COMMIT_SHA"
       
-          RESPONSE=$(curl -s -X GET "https://debricked.com/api/1.0/open/vulnerabilities/overview?commit=$COMMIT_SHA" \
-            -H "Authorization: Bearer ${{ secrets.DEBRICKED_TOKEN }}")
+          RESPONSE=$(curl -s -X GET "https://debricked.com/api/1.0/open/vulnerabilities/risk-overview?commit=$COMMIT_SHA" \
+            -H "Authorization: token ${{ secrets.DEBRICKED_TOKEN }}")
       
           echo "$RESPONSE"
       
