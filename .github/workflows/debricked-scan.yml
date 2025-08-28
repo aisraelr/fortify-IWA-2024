@@ -1,78 +1,45 @@
 name: Java CI with Debricked Scan v1
 
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - main
+  pull_request:
 
 jobs:
-  build-and-test:
-    name: Build and Unit Test (Maven)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17' # Ajusta si tu proyecto usa otra versión
-
-      - name: Build with Maven
-        run: mvn clean install -B
-
-      - name: Run Unit Tests
-        run: mvn test -B
-
   debricked-scan:
-    name: Debricked Scan and Validation
     runs-on: ubuntu-latest
-    needs: build-and-test
-
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Debricked cache
-        uses: debricked/actions/cache@v4
-
-      - name: Debricked scan (non-docker)
-        id: debricked-scan
-        uses: debricked/actions/scan-non-docker@v4
-        env:
-          DEBRICKED_TOKEN: ${{ secrets.DEBRICKED_TOKEN }}
-
-      - name: Fetch Debricked vulnerabilities
+      - name: Run Debricked Scan
         run: |
-          COMMIT_SHA="${{ github.sha }}"
-          echo "Fetching results for commit: $COMMIT_SHA"
-      
-          RESPONSE=$(curl -s -X GET "https://debricked.com/api/1.0/open/scans/commits/$COMMIT_SHA/vulnerabilities" \
-            -H "Authorization: token ${{ secrets.DEBRICKED_TOKEN }}")
-      
-          echo "$RESPONSE"
-      
-          CRITICAL=$(echo "$RESPONSE" | jq '.data.critical')
-          HIGH=$(echo "$RESPONSE" | jq '.data.high')
-      
-          echo "CRITICAL=$CRITICAL" >> $GITHUB_ENV
-          echo "HIGH=$HIGH" >> $GITHUB_ENV
+          docker run --rm \
+            -v ${{ github.workspace }}:/src \
+            -e DEBRICKED_TOKEN=${{ secrets.DEBRICKED_TOKEN }} \
+            ghcr.io/debricked/cli:latest scan /src --upload
 
-          
-      - name: Validate vulnerabilities
+      - name: Save report
         run: |
-          echo "Validating vulnerability thresholds..."
-          echo "Critical issues: $CRITICAL"
-          echo "High issues: $HIGH"
+          mkdir -p reports
+          docker run --rm \
+            -v ${{ github.workspace }}:/src \
+            -e DEBRICKED_TOKEN=${{ secrets.DEBRICKED_TOKEN }} \
+            ghcr.io/debricked/cli:latest report /src --format json --output /src/reports/debricked-report.json
 
-          if [ "$CRITICAL" -gt 10 ]; then
-            echo "❌ Too many critical issues ($CRITICAL). Failing pipeline."
+      - name: Upload scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: debricked-report
+          path: reports/debricked-report.json
+
+      - name: Fail if critical/high vulnerabilities
+        run: |
+          CRITICAL=$(jq '.summary.critical' reports/debricked-report.json)
+          HIGH=$(jq '.summary.high' reports/debricked-report.json)
+          echo "Found CRITICAL=$CRITICAL HIGH=$HIGH"
+          if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+            echo "❌ Vulnerabilities found! Failing the job."
             exit 1
           fi
-
-          if [ "$HIGH" -gt 20 ]; then
-            echo "❌ Too many high severity issues ($HIGH). Failing pipeline."
-            exit 1
-          fi
-        env:
-          CRITICAL: ${{ env.CRITICAL }}
-          HIGH: ${{ env.HIGH }}
