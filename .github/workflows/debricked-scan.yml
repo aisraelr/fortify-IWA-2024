@@ -36,8 +36,9 @@ jobs:
       - name: Debricked cache
         uses: debricked/actions/cache@v4
 
-      - name: Debricked scan
-        uses: debricked/actions/scan@v4
+      - name: Debricked scan (non-docker)
+        id: debricked-scan
+        uses: debricked/actions/scan-non-docker@v4
         env:
           DEBRICKED_TOKEN: ${{ secrets.DEBRICKED_TOKEN }}
 
@@ -45,7 +46,7 @@ jobs:
         id: get-scan-result
         run: |
           echo "Fetching scan results from Debricked..."
-          SCAN_ID=$(cat .debricked/scan_id)
+          SCAN_ID=${{ steps.debricked-scan.outputs.scan-id }}
           echo "Scan ID: $SCAN_ID"
 
           RESPONSE=$(curl -s -X GET "https://debricked.com/api/1.0/open/vulnerabilities/overview?scanId=$SCAN_ID" \
