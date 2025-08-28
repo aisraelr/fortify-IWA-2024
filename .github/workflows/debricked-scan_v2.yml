@@ -1,4 +1,4 @@
-name: Java CI with Debricked Scan
+name: Java CI with Debricked Scan v2
 
 on: [push, pull_request]
 
