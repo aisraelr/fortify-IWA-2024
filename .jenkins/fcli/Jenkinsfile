@@ -5,31 +5,54 @@ pipeline {
 
     parameters {
         string(name: 'FOD_RELEASE_ID', defaultValue: '', description: 'Fortify on Demand Release ID')
+        string(name: 'BRANCH_NAME', defaultValue: 'main', description: 'Branch to build')
+        string(name: 'MVN_GOALS', defaultValue: 'clean package -DskipTests', description: 'Maven build goals')
     }
 
     environment {
-        FCLI_HOME = 'C:\\fcli'   // Ajusta a tu ruta local de fcli.exe si es distinta
+        FCLI_HOME = 'C:\\fcli'
         PATH = "${env.PATH};${env.FCLI_HOME}"
+        FCLI_VERSION = 'v3.8.1'   // 🔧 cámbialo fácilmente cuando salga nueva versión
     }
 
     stages {
+        stage('Setup FCLI') {
+            steps {
+                script {
+                    if (!fileExists("${env.FCLI_HOME}\\fcli.exe")) {
+                        echo "⚙️ fcli not found. Downloading..."
+                        bat """
+                            mkdir ${env.FCLI_HOME} 2>nul
+                            powershell -Command "Invoke-WebRequest -Uri https://github.com/fortify/fcli/releases/download/${env.FCLI_VERSION}/fcli-windows.zip -OutFile ${env.FCLI_HOME}\\fcli.zip"
+                            powershell -Command "Expand-Archive -Force ${env.FCLI_HOME}\\fcli.zip ${env.FCLI_HOME}"
+                            del ${env.FCLI_HOME}\\fcli.zip
+                        """
+                    } else {
+                        echo "✅ fcli already installed at ${env.FCLI_HOME}"
+                    }
+                }
+            }
+        }
+
         stage('Checkout') {
             steps {
-                echo "Checking out source code..."
-                checkout scm
+                echo "📥 Checking out branch: ${params.BRANCH_NAME}"
+                checkout([$class: 'GitSCM',
+                          branches: [[name: "*/${params.BRANCH_NAME}"]],
+                          userRemoteConfigs: [[url: scm.userRemoteConfigs[0].url]]])
             }
         }
 
         stage('Build') {
             steps {
-                echo "Building the application..."
-                bat "mvn clean package -DskipTests"
+                echo "⚒️ Running Maven build with goals: ${params.MVN_GOALS}"
+                bat "mvn ${params.MVN_GOALS}"
             }
         }
 
         stage('FoD SAST Scan') {
             steps {
-                echo "Starting FoD SAST scan..."
+                echo "🚀 Starting FoD SAST scan..."
                 bat """
                     fcli.exe fod sast-scan start ^
                         --rel ${params.FOD_RELEASE_ID} ^
@@ -48,7 +71,7 @@ pipeline {
 
         stage('Wait for Scan Completion') {
             steps {
-                echo "Waiting for scan completion..."
+                echo "⏳ Waiting for scan completion..."
                 bat """
                     fcli.exe fod sast-scan wait-for --scan ${env.SCAN_ID} --fod-session jenkins
                 """
@@ -57,7 +80,7 @@ pipeline {
 
         stage('Get Scan Results') {
             steps {
-                echo "Fetching scan results..."
+                echo "📥 Fetching scan results..."
                 bat """
                     fcli.exe fod sast-scan get ${env.SCAN_ID} --fod-session jenkins --output json > scanResult.json
                 """
@@ -71,7 +94,7 @@ pipeline {
 
     post {
         always {
-            echo "Cleaning up..."
+            echo "🧹 Cleaning up..."
         }
     }
 }
