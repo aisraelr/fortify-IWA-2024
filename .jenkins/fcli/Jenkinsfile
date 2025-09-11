@@ -83,7 +83,7 @@ pipeline {
                             echo "✅ Scan ID capturado(1): ${scanId}"
 
                             if (scanId) {
-                                env.SCAN_ID = scanId
+                                env.SCAN_ID = scanId.toString().trim()
                                 echo "✅ Scan ID capturado(2): ${env.SCAN_ID}"
                             } else {
                                 error "❌ No se pudo extraer el Scan ID del output"
