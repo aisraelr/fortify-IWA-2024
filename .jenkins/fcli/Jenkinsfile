@@ -13,15 +13,10 @@ pipeline {
     }
 
     environment {
-        // Ajusta si cambia el nombre o versión de la app
         APP_NAME       = "IWA-JAVA-2024"
         APP_VERSION    = "Github-2025"
-        
-        // Credenciales
         FOD_CLIENT_ID     = credentials('iwa-fod-client-id')
         FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
-
-        // Variables para Git (modificado para Windows)
         GIT_URL        = "https://github.com/aisraelr/fortify-IWA-2024.git"
         GIT_REPO_NAME  = "fortify-IWA-2024"
     }
@@ -30,13 +25,9 @@ pipeline {
         stage('Initialize') {
             steps {
                 script {
-                    // Obtener información de Git de forma compatible con Windows
                     env.GIT_COMMIT = bat(script: "git rev-parse HEAD", returnStdout: true).trim()
                     env.GIT_BRANCH = bat(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
-                    
                     echo "Repository: ${env.GIT_REPO_NAME}"
-                    echo "Commit: ${env.GIT_COMMIT}"
-                    echo "Branch: ${env.GIT_BRANCH}"
                 }
             }
         }
@@ -44,7 +35,7 @@ pipeline {
         stage('Build') {
             steps {
                 bat "mvn clean package -DskipTests"
-                junit '**/target/surefire-reports/TEST-*.xml'
+                // Eliminado junit porque skipTests no genera reportes
                 archiveArtifacts artifacts: "target/*.jar", fingerprint: true
                 stash includes: "target/*.jar", name: "${env.APP_NAME}_release"
             }
@@ -84,7 +75,10 @@ pipeline {
                             )
                             
                             echo [INFO] Starting SAST scan...
-                            fcli.exe fod sast-scan start --release-id "${params.FOD_RELEASE_ID}" --upload "target/*.jar" --fod-session jenkins --store curScan
+                            for /f "delims=" %%i in ('dir /b target\\*.jar') do (
+                                echo Uploading file: %%i
+                                fcli.exe fod sast-scan start --release-id "${params.FOD_RELEASE_ID}" --upload "target/%%i" --fod-session jenkins --store curScan
+                            )
                             if %errorlevel% neq 0 (
                                 echo [ERROR] Failed to start SAST scan
                                 fcli.exe fod session logout --fod-session jenkins
@@ -112,7 +106,7 @@ pipeline {
     post {
         always {
             echo "Pipeline execution completed"
-            cleanWs() // Limpiar workspace
+            cleanWs()
         }
         success {
             echo "Pipeline succeeded!"
