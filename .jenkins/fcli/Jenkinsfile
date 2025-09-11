@@ -1,89 +1,97 @@
-stage('FoD SAST Scan') {
-    when {
-        expression { params.FOD_SAST == true }
+pipeline {
+    agent any
+
+    environment {
+        FOD_SESSION = 'jenkins'
+        RELEASE_ID  = '1388854'
     }
-    steps {
-        script {
-            withCredentials([
-                string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
-                string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
-            ]) {
-                // Ejecutar el comando y capturar TODO el output
-                def scanOutput = bat(script: """
-                    @echo off
-                    echo [INFO] Downloading fcli for Windows v3.8.1...
-                    curl -L https://github.com/fortify/fcli/releases/download/v3.8.1/fcli-windows.zip -o fcli-windows.zip
-                    if %errorlevel% neq 0 exit 1
-                    
-                    echo [INFO] Extracting fcli...
-                    tar -xf fcli-windows.zip fcli.exe
-                    if %errorlevel% neq 0 exit 1
-                    
-                    echo [INFO] Logging into FoD...
-                    fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
-                    if %errorlevel% neq 0 exit 1
-                    
-                    echo [INFO] Uploading fat JAR for complete analysis...
-                    fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\\\iwa.jar" --fod-session jenkins --store curScan
-                    
-                    echo [INFO] Logging out from FoD...
-                    fcli.exe fod session logout --fod-session jenkins
-                """, returnStdout: true).trim()
-                
-                // DEBUG: Mostrar el output completo para diagnóstico
-                echo "=== DEBUG: OUTPUT COMPLETO ==="
-                echo scanOutput
-                echo "=============================="
-                
-                // Múltiples métodos para extraer el Scan ID
-                def scanId = null
-                
-                // Método 1: Buscar el patrón en la tabla
-                def scanIdMatch = scanOutput =~ /(?m)(\\d+)\\s+Static\\s+Pending/
-                if (scanIdMatch) {
-                    scanId = scanIdMatch[0][1]
-                    echo "✅ Scan ID encontrado (Método 1): ${scanId}"
-                }
-                
-                // Método 2: Buscar por línea que contiene "Id"
-                if (!scanId) {
-                    scanOutput.eachLine { line ->
-                        if (line.contains('Id') && line.contains('Static') && line.contains('Pending')) {
-                            def parts = line.trim().split('\\\\s+')
-                            if (parts.size() >= 2 && parts[1].isNumber()) {
-                                scanId = parts[1]
-                                echo "✅ Scan ID encontrado (Método 2): ${scanId}"
-                            }
-                        }
-                    }
-                }
-                
-                // Método 3: Buscar cualquier número de 8+ dígitos
-                if (!scanId) {
-                    def digitMatch = scanOutput =~ /\\b(\\d{8,})\\b/
-                    if (digitMatch) {
-                        scanId = digitMatch[0][1]
-                        echo "✅ Scan ID encontrado (Método 3): ${scanId}"
-                    }
-                }
-                
-                if (scanId) {
-                    env.SCAN_ID = scanId
-                    echo "🎯 Scan ID capturado: ${env.SCAN_ID}"
-                } else {
-                    echo "⚠️  No se pudo extraer el Scan ID automáticamente"
-                    echo "📋 Output del scan para revisión manual:"
-                    echo scanOutput
-                    
-                    // Forzar un Scan ID para continuar (opcional)
-                    env.SCAN_ID = "MANUAL_REVIEW_NEEDED"
-                    echo "ℹ️  Usando Scan ID temporal: ${env.SCAN_ID}"
-                }
-                
-                echo "✅ Scan submitted successfully!"
-                echo "📋 Scan ID: ${env.SCAN_ID}"
-                echo "🌐 FoD Portal: ${params.FOD_URL}"
+
+    stages {
+
+        stage('Checkout SCM') {
+            steps {
+                echo "🔄 Checking out source code..."
+                checkout([$class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/aisraelr/fortify-IWA-2024.git',
+                        credentialsId: 'GitHub_Personal'
+                    ]]
+                ])
             }
+        }
+
+        stage('FoD SAST Scan') {
+            steps {
+                echo "🚀 Starting FoD SAST scan..."
+                bat """
+                    fcli.exe fod sast-scan start ^
+                        --rel %RELEASE_ID% ^
+                        --file "target\\iwa.jar" ^
+                        --fod-session %FOD_SESSION% ^
+                        --store curScan ^
+                        --output json ^
+                        1>curScan_raw.txt 2>curScan.err
+                """
+
+                powershell """
+                    # Extraer solo la línea JSON válida
+                    \$jsonLine = Select-String -Path curScan_raw.txt -Pattern '^{.*}\$' | ForEach-Object { \$_.
+Matches[0].Value }
+                    \$jsonLine | Set-Content -Encoding UTF8 curScan.json
+                """
+
+                script {
+                    def scanInfo = readJSON file: 'curScan.json'
+                    env.SCAN_ID = scanInfo.releaseAndScanId
+                    echo "✅ Scan started: ${env.SCAN_ID}"
+                }
+            }
+        }
+
+        stage('Wait for Scan Completion') {
+            steps {
+                echo "⏳ Waiting for scan completion..."
+                bat """
+                    fcli.exe fod sast-scan wait-for ::SCAN_ID:: ^
+                        --fod-session %FOD_SESSION% ^
+                        --timeout 1h ^
+                        --output json ^
+                        1>waitScan.json 2>waitScan.err
+                """
+            }
+        }
+
+        stage('Get Scan Results') {
+            steps {
+                echo "📄 Retrieving scan results..."
+                bat """
+                    fcli.exe fod sast-scan results ::SCAN_ID:: ^
+                        --fod-session %FOD_SESSION% ^
+                        --output json ^
+                        --store scanResults ^
+                        1>scanResults.json 2>scanResults.err
+                """
+
+                script {
+                    def results = readJSON file: 'scanResults.json'
+                    echo "Scan Status: ${results.status}"
+                    echo "Total Issues: ${results.totalIssueCount}"
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "🧹 Cleaning up..."
+            bat "del curScan_raw.txt curScan.json curScan.err waitScan.json waitScan.err scanResults.json scanResults.err"
+        }
+        success {
+            echo "✅ Pipeline completed successfully!"
+        }
+        failure {
+            echo "❌ Pipeline failed!"
         }
     }
 }
