@@ -51,33 +51,27 @@ pipeline {
         }
 
         stage('FoD SAST Scan') {
-            steps {
-                echo "🚀 Starting FoD SAST scan..."
-                bat """
-                fcli.exe fod sast-scan start ^
-                    --rel ${FOD_RELEASE_ID} ^
-                    --file "target\\iwa.jar" ^
-                    --fod-session jenkins ^
-                    --store curScan ^
-                    --output json > curScan_raw.txt 2>curScan.err
-                powershell -Command "(Get-Content curScan_raw.txt) -join '' | Select-String -Pattern '{.*}' | ForEach-Object { \$_ } | Set-Content curScan.json"
-                """
-                script {
-                    def jsonContent = readFile('curScan.json').trim()
-                    if (!jsonContent.startsWith("{")) {
-                        echo "❌ fcli did not return JSON."
-                        echo "---- curScan.json ----"
-                        echo jsonContent
-                        echo "---- curScan.err ----"
-                        echo readFile('curScan.err')
-                        error("FoD SAST scan start failed. See above error.")
-                    }
-                    def curScan = readJSON text: jsonContent
-                    env.SCAN_ID = curScan.id.toString()
-                    echo "✅ Captured Scan ID: ${env.SCAN_ID}"
-                }
+        steps {
+            echo "🛠 Starting FoD SAST scan..."
+            bat """
+            fcli.exe fod sast-scan start ^
+                --rel ${FOD_RELEASE_ID} ^
+                --file "target\\iwa.jar" ^
+                --fod-session jenkins ^
+                --store curScan ^
+                --output json > curScan_raw.txt 2>curScan.err
+            """
+            // Extraer solo el JSON al final del archivo
+            powershell """
+            Get-Content curScan_raw.txt | Select-String -Pattern '^{.*' | Set-Content curScan.json
+            """
+            script {
+            def curScan = readJSON file: 'curScan.json'
+            echo "Scan started: ${curScan.scanId}"
             }
         }
+        }
+
 
         stage('Wait for Scan Completion') {
             steps {
