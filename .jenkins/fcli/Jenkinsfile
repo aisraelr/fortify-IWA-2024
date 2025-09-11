@@ -59,15 +59,22 @@ pipeline {
                         --file "target\\iwa.jar" ^
                         --fod-session jenkins ^
                         --store curScan ^
-                        --output json > curScan.json
+                        --output json > curScan.json 2>curScan.err
                 """
                 script {
-                    def curScan = readJSON file: 'curScan.json'
+                    def jsonContent = readFile('curScan.json').trim()
+                    if (!jsonContent.startsWith("{")) {
+                        echo "❌ fcli did not return JSON. Error output:"
+                        echo readFile('curScan.err')
+                        error("FoD SAST scan start failed. See above error.")
+                    }
+                    def curScan = readJSON text: jsonContent
                     env.SCAN_ID = curScan.id.toString()
                     echo "✅ Captured Scan ID: ${env.SCAN_ID}"
                 }
             }
         }
+
 
         stage('Wait for Scan Completion') {
             steps {
