@@ -96,51 +96,58 @@ pipeline {
                             fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
                             if %errorlevel% neq 0 (
                                 echo [ERROR] Failed to login to FoD - HTTP 401 Unauthorized
-                                echo [TROUBLESHOOTING] 
-                                echo [TROUBLESHOOTING] Possible causes:
-                                echo [TROUBLESHOOTING] 1. Invalid Client ID or Client Secret
-                                echo [TROUBLESHOOTING] 2. API user disabled in FoD portal
-                                echo [TROUBLESHOOTING] 3. Wrong FoD region (AMS/EMEA/APAC)
-                                echo [TROUBLESHOOTING] 4. Credentials expired
-                                echo [TROUBLESHOOTING] 
-                                echo [TROUBLESHOOTING] Please check:
-                                echo [TROUBLESHOOTING] - FoD Portal -> Administration -> User Management -> API Users
-                                echo [TROUBLESHOOTING] - Verify Client ID is active and Client Secret is correct
                                 exit 1
                             )
                             
-                            echo [INFO] Login successful! Listing available releases...
-                            fcli.exe fod release list --fod-session jenkins
+                            echo [INFO] Login successful! Verifying session...
+                            fcli.exe session list
+                            
+                            echo [INFO] Listing available releases to verify access...
+                            fcli.exe fod release list --fod-session jenkins --output table
+                            if %errorlevel% neq 0 (
+                                echo [ERROR] Cannot list releases - check permissions
+                                fcli.exe fod session logout --fod-session jenkins
+                                exit 1
+                            )
                             
                             echo [INFO] Checking if release ${params.FOD_RELEASE_ID} exists...
-                            fcli.exe fod release get ${params.FOD_RELEASE_ID} --fod-session jenkins
+                            fcli.exe fod release get ${params.FOD_RELEASE_ID} --fod-session jenkins --output json
                             if %errorlevel% neq 0 (
                                 echo [ERROR] Release ${params.FOD_RELEASE_ID} not found or no access
-                                echo [TROUBLESHOOTING] Check:
-                                echo [TROUBLESHOOTING] 1. Release ID is correct
-                                echo [TROUBLESHOOTING] 2. API user has access to this release
+                                echo [DEBUG] Trying to get release info in different format...
+                                fcli.exe fod release get ${params.FOD_RELEASE_ID} --fod-session jenkins
                                 fcli.exe fod session logout --fod-session jenkins
                                 exit 1
                             )
                             
                             echo [INFO] Looking for JAR files to upload...
                             dir /b target\\*.jar
+                            if not exist target\\*.jar (
+                                echo [ERROR] No JAR files found in target directory!
+                                echo [DEBUG] Contents of target directory:
+                                dir target
+                                fcli.exe fod session logout --fod-session jenkins
+                                exit 1
+                            )
                             
                             echo [INFO] Starting SAST scan...
                             for /f "delims=" %%i in ('dir /b target\\*.jar 2^>nul') do (
                                 echo [INFO] Uploading file: target/%%i
-                                echo [INFO] Command: fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target/%%i" --fod-session jenkins --store curScan
+                                echo [INFO] File size: 
+                                for /f %%s in ('dir /-c "target\\%%i" ^| findstr "%%i"') do echo %%s
                                 
-                                fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target/%%i" --fod-session jenkins --store curScan
+                                fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\%%i" --fod-session jenkins --store curScan
                                 if !errorlevel! neq 0 (
-                                    echo [ERROR] Failed to start SAST scan for file: target/%%i
+                                    echo [ERROR] Failed to start SAST scan for file: target\\%%i
+                                    echo [DEBUG] Trying with debug mode...
+                                    fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\%%i" --fod-session jenkins --debug
                                     fcli.exe fod session logout --fod-session jenkins
                                     exit 1
                                 )
                             )
                             
                             echo [INFO] Waiting for scan to complete...
-                            fcli.exe fod sast-scan wait-for ::curScan:: --fod-session jenkins
+                            fcli.exe fod sast-scan wait-for ::curScan:: --fod-session jenkins --debug
                             if %errorlevel% neq 0 (
                                 echo [ERROR] Scan failed or timed out
                                 fcli.exe fod session logout --fod-session jenkins
@@ -148,7 +155,7 @@ pipeline {
                             )
                             
                             echo [INFO] Getting scan results...
-                            fcli.exe fod sast-scan get ::curScan:: --fod-session jenkins
+                            fcli.exe fod sast-scan get ::curScan:: --fod-session jenkins --output json
                             
                             echo [INFO] Logging out from FoD...
                             fcli.exe fod session logout --fod-session jenkins
@@ -157,8 +164,7 @@ pipeline {
                     }
                 }
             }
-        }        
-    }
+        }
 
     post {
         always {
