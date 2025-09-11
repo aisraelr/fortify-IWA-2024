@@ -2,34 +2,42 @@ pipeline {
     agent any
 
     environment {
-        FOD_SESSION = 'jenkins'        // Nombre de la sesión FoD configurada
-        RELEASE_ID  = '1388854'        // ID de tu release en FoD
-        APP_FILE    = 'target\\iwa.jar' // Ruta del archivo a escanear
+        FOD_SESSION = "jenkins"      // Nombre de tu sesión FoD configurada
+        RELEASE_ID  = "1388854"      // Release ID
     }
 
     stages {
+        stage('Checkout SCM') {
+            steps {
+                checkout scm
+            }
+        }
 
         stage('FoD SAST Scan') {
             steps {
                 echo "🚀 Starting FoD SAST scan..."
-
-                // Ejecutar el scan y guardar salida cruda
                 bat """
-                fcli.exe fod sast-scan start --rel ${RELEASE_ID} --file "${APP_FILE}" --fod-session ${FOD_SESSION} --store curScan --output json 1>curScan_raw.txt 2>curScan.err
+                    fcli.exe fod sast-scan start ^
+                        --rel ${RELEASE_ID} ^
+                        --file "target\\iwa.jar" ^
+                        --fod-session ${FOD_SESSION} ^
+                        --store curScan ^
+                        --output json ^
+                        1>curScan_raw.txt 2>curScan.err
                 """
 
-                // Extraer solo el JSON válido usando PowerShell
                 powershell """
-                \$jsonLine = Select-String -Path curScan_raw.txt -Pattern '^{.*}\$' | ForEach-Object { \$_.
-                Matches[0].Value }
-                \$jsonLine | Set-Content -Encoding UTF8 curScan.json
+                    # Extraer solo la línea JSON del log
+                    \$jsonLine = Select-String -Path curScan_raw.txt -Pattern '^{.*}\$' | ForEach-Object { \$_.
+Matches[0].Value }
+                    \$jsonLine | Set-Content -Encoding UTF8 curScan.json
                 """
 
-                // Leer JSON limpio y guardar releaseAndScanId en variable de entorno
                 script {
+                    // Leer JSON y guardar Scan ID
                     def scanInfo = readJSON file: 'curScan.json'
                     env.SCAN_ID = scanInfo.releaseAndScanId
-                    echo "Scan ID obtained: ${env.SCAN_ID}"
+                    echo "✅ Scan started: ${env.SCAN_ID}"
                 }
             }
         }
@@ -37,27 +45,24 @@ pipeline {
         stage('Wait for Scan Completion') {
             steps {
                 echo "⏳ Waiting for scan completion..."
-
-                // Esperar a que el scan termine
-                bat """
-                fcli.exe fod sast-scan wait-for ::SCAN_ID:: --fod-session ${FOD_SESSION} --timeout 1h
-                """
+                bat "fcli.exe fod sast-scan wait-for ::SCAN_ID:: --fod-session ${FOD_SESSION} --timeout 1h"
             }
         }
 
         stage('Get Scan Results') {
             steps {
-                echo "📊 Getting scan results..."
-
-                // Obtener resultados finales del scan
-                bat """
-                fcli.exe fod sast-scan get-results ::SCAN_ID:: --fod-session ${FOD_SESSION} --output json --store scanResults --to-file scanResults.json
+                echo "📄 Retrieving scan results..."
+                bat "fcli.exe fod sast-scan results ::SCAN_ID:: --fod-session ${FOD_SESSION} --output json --store scanResults"
+                
+                powershell """
+                    # Guardar resultados en archivo JSON
+                    \$scanResults = ConvertTo-Json (::scanResults::)
+                    Set-Content -Path scanResults.json -Value \$scanResults -Encoding UTF8
                 """
-                // Leer y mostrar el resultado
+
                 script {
                     def results = readJSON file: 'scanResults.json'
-                    echo "Analysis Status: ${results.analysisStatusType}"
-                    echo "Total Issues: ${results.totalIssues ?: 'N/A'}"
+                    echo "Scan Analysis Status: ${results.analysisStatusType}"
                 }
             }
         }
@@ -68,11 +73,11 @@ pipeline {
             echo "🧹 Cleaning up..."
             bat "del curScan_raw.txt curScan.json curScan.err scanResults.json"
         }
-        success {
-            echo "✅ Pipeline completed successfully!"
-        }
         failure {
             echo "❌ Pipeline failed!"
+        }
+        success {
+            echo "✅ Pipeline completed successfully!"
         }
     }
 }
