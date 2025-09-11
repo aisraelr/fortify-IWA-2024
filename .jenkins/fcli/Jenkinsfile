@@ -2,20 +2,24 @@ pipeline {
     agent any
 
     environment {
-        FOD_SESSION = 'jenkins'
-        RELEASE_ID  = '1388854'
+        // Ajusta según tu release de FoD
+        FOD_RELEASE_ID = "1388854"
+        FOD_SESSION    = "jenkins"
+        SCAN_STORE     = "curScan"
     }
 
     stages {
-
         stage('Checkout SCM') {
             steps {
-                echo "🔄 Checking out source code..."
-                checkout([$class: 'GitSCM',
-                    branches: [[name: '*/main']],
+                echo "📂 Checking out source code..."
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/main"]],
+                    doGenerateSubmoduleConfigurations: false,
+                    extensions: [],
                     userRemoteConfigs: [[
-                        url: 'https://github.com/aisraelr/fortify-IWA-2024.git',
-                        credentialsId: 'GitHub'
+                        credentialsId: 'GitHub',   // <- Usa tu credencial correcta
+                        url: 'https://github.com/aisraelr/fortify-IWA-2024.git'
                     ]]
                 ])
             }
@@ -26,72 +30,52 @@ pipeline {
                 echo "🚀 Starting FoD SAST scan..."
                 bat """
                     fcli.exe fod sast-scan start ^
-                        --rel %RELEASE_ID% ^
+                        --rel %FOD_RELEASE_ID% ^
                         --file "target\\iwa.jar" ^
                         --fod-session %FOD_SESSION% ^
-                        --store curScan ^
-                        --output json ^
-                        1>curScan_raw.txt 2>curScan.err
+                        --store %SCAN_STORE% ^
+                        --output json > curScan.json 2> curScan.err
                 """
-
-                powershell """
-                    # Extraer solo la línea JSON válida
-                    \$jsonLine = Select-String -Path curScan_raw.txt -Pattern '^{.*}\$' | ForEach-Object { \$_.
-Matches[0].Value }
-                    \$jsonLine | Set-Content -Encoding UTF8 curScan.json
-                """
-
-                script {
-                    def scanInfo = readJSON file: 'curScan.json'
-                    env.SCAN_ID = scanInfo.releaseAndScanId
-                    echo "✅ Scan started: ${env.SCAN_ID}"
-                }
             }
         }
 
         stage('Wait for Scan Completion') {
             steps {
-                echo "⏳ Waiting for scan completion..."
+                echo "⏳ Waiting for FoD scan to complete..."
                 bat """
-                    fcli.exe fod sast-scan wait-for ::SCAN_ID:: ^
+                    fcli.exe fod scan wait-for ^
+                        --scan-session %SCAN_STORE% ^
                         --fod-session %FOD_SESSION% ^
-                        --timeout 1h ^
-                        --output json ^
-                        1>waitScan.json 2>waitScan.err
+                        --store waitScan ^
+                        --output json > waitScan.json 2> waitScan.err
                 """
             }
         }
 
         stage('Get Scan Results') {
             steps {
-                echo "📄 Retrieving scan results..."
+                echo "📊 Getting FoD scan results..."
                 bat """
-                    fcli.exe fod sast-scan results ::SCAN_ID:: ^
+                    fcli.exe fod scan get-results ^
+                        --scan-session %SCAN_STORE% ^
                         --fod-session %FOD_SESSION% ^
-                        --output json ^
-                        --store scanResults ^
-                        1>scanResults.json 2>scanResults.err
+                        --output json > scanResults.json 2> scanResults.err
                 """
-
-                script {
-                    def results = readJSON file: 'scanResults.json'
-                    echo "Scan Status: ${results.status}"
-                    echo "Total Issues: ${results.totalIssueCount}"
-                }
+                archiveArtifacts artifacts: 'scanResults.json', fingerprint: true
             }
         }
     }
 
     post {
-        always {
-            echo "🧹 Cleaning up..."
-            bat "del curScan_raw.txt curScan.json curScan.err waitScan.json waitScan.err scanResults.json scanResults.err"
-        }
         success {
             echo "✅ Pipeline completed successfully!"
         }
         failure {
             echo "❌ Pipeline failed!"
+        }
+        always {
+            echo "🧹 Cleaning up..."
+            bat 'del /Q curScan.json curScan.err waitScan.json waitScan.err scanResults.err 2>nul || exit 0'
         }
     }
 }
