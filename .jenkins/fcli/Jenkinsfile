@@ -60,8 +60,7 @@ pipeline {
                     --fod-session jenkins ^
                     --store curScan ^
                     --output json > curScan_raw.txt 2>curScan.err
-                for /f "delims=" %%i in ('type curScan_raw.txt ^| findstr /B "{"') do echo %%i >> curScan.json
-                for /f "delims=" %%i in ('type curScan_raw.txt ^| findstr /B "}"') do echo %%i >> curScan.json
+                powershell -Command "(Get-Content curScan_raw.txt) -join '' | Select-String -Pattern '{.*}' | ForEach-Object { \$_ } | Set-Content curScan.json"
                 """
                 script {
                     def jsonContent = readFile('curScan.json').trim()
