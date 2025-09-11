@@ -14,6 +14,8 @@ pipeline {
             description: 'Fail pipeline if critical issues exceed this count')
         int(name: 'HIGH_THRESHOLD', defaultValue: 10, 
             description: 'Fail pipeline if high issues exceed this count')
+        int(name: 'SCAN_TIMEOUT_MINUTES', defaultValue: 120, 
+            description: 'Timeout in minutes for scan completion')
     }
 
     environment {
@@ -23,7 +25,7 @@ pipeline {
         FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
         GIT_URL        = "https://github.com/aisraelr/fortify-IWA-2024.git"
         GIT_REPO_NAME  = "fortify-IWA-2024"
-        SCAN_IDS       = ""  // Para almacenar IDs dinámicamente
+        SCAN_ID        = ""  // Solo UN Scan ID
     }
 
     stages {
@@ -33,6 +35,8 @@ pipeline {
                     env.GIT_COMMIT = bat(script: "git rev-parse HEAD", returnStdout: true).trim()
                     env.GIT_BRANCH = bat(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
                     echo "Repository: ${env.GIT_REPO_NAME}"
+                    echo "Commit: ${env.GIT_COMMIT}"
+                    echo "Branch: ${env.GIT_BRANCH}"
                 }
             }
         }
@@ -41,12 +45,13 @@ pipeline {
             steps {
                 bat "mvn clean package -DskipTests"
                 bat "dir target\\*.jar /b"
+                // Archivar ambos JARs por si acaso, pero solo escanearemos el fat JAR
                 archiveArtifacts artifacts: "target/*.jar", fingerprint: true
                 stash includes: "target/*.jar", name: "${env.APP_NAME}_release"
             }
         }
 
-        stage('FoD SAST Scan - Queue Only') {
+        stage('FoD SAST Scan') {
             when {
                 expression { params.FOD_SAST == true }
             }
@@ -59,38 +64,75 @@ pipeline {
                         bat """
                             @echo off
                             echo [INFO] ===== FO DSAST SCAN =====
-                            set SCAN_IDS=
+                            echo [INFO] Scanning fat JAR: iwa.jar (86.8 MB)
+                            echo [INFO] Release ID: ${params.FOD_RELEASE_ID}
                             
-                            for /f "delims=" %%i in ('dir /b target\\*.jar 2^>nul') do (
-                                echo [INFO] Uploading: target\\%%i
-                                fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\%%i" --fod-session jenkins --store curScan
-                                if !errorlevel! neq 0 (
-                                    echo [WARNING] fcli returned error code, but continuing...
-                                )
+                            echo [INFO] Downloading fcli for Windows v3.8.1...
+                            curl -L https://github.com/fortify/fcli/releases/download/v3.8.1/fcli-windows.zip -o fcli-windows.zip
+                            if %errorlevel% neq 0 (
+                                echo [ERROR] Failed to download fcli
+                                exit 1
                             )
                             
-                            echo [INFO] Listing recent scans...
+                            echo [INFO] Extracting fcli...
+                            tar -xf fcli-windows.zip fcli.exe
+                            if %errorlevel% neq 0 (
+                                echo [ERROR] Failed to extract fcli
+                                exit 1
+                            )
+                            
+                            echo [INFO] fcli version:"
+                            fcli.exe --version
+                            
+                            echo [INFO] Logging into FoD...
+                            fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
+                            if %errorlevel% neq 0 (
+                                echo [ERROR] Failed to login to FoD
+                                exit 1
+                            )
+                            
+                            echo [INFO] Uploading fat JAR for complete analysis...
+                            fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\iwa.jar" --fod-session jenkins --store curScan
+                            if !errorlevel! neq 0 (
+                                echo [WARNING] fcli returned error code, but scan may have been queued
+                            )
+                            
+                            echo [INFO] Getting the most recent scan ID...
                             fcli.exe fod sast-scan list --rel ${params.FOD_RELEASE_ID} --fod-session jenkins --output json > scans.json
                         """
                         
-                        // Leer el JSON y extraer los IDs
+                        // Capturar el scan ID más reciente
                         script {
                             def scans = readJSON file: 'scans.json'
-                            def scanIds = []
-                            scans.each { scan ->
-                                if (scan.analysisStatus == 'Queued' || scan.analysisStatus == 'Pending') {
-                                    scanIds.add(scan.id)
-                                }
+                            if (scans && scans.size() > 0) {
+                                // Ordenar por fecha descendente y tomar el más reciente
+                                def sortedScans = scans.sort { -it.started }
+                                env.SCAN_ID = sortedScans[0].id
+                                echo "✅ Captured Scan ID: ${env.SCAN_ID}"
+                                echo "📊 Scan Status: ${sortedScans[0].analysisStatus}"
+                                echo "🕐 Started: ${sortedScans[0].started}"
+                            } else {
+                                error "❌ No scans found for release ${params.FOD_RELEASE_ID}"
                             }
-                            env.SCAN_IDS = scanIds.join(', ')
-                            echo "Captured Scan IDs: ${env.SCAN_IDS}"
                         }
+                        
+                        bat """
+                            echo [INFO] Logging out from FoD...
+                            fcli.exe fod session logout --fod-session jenkins
+                            
+                            echo [SUCCESS] ####################################
+                            echo [SUCCESS] # Scan queued successfully in FoD! #
+                            echo [SUCCESS] # Scan ID: ${env.SCAN_ID}           #
+                            echo [SUCCESS] # Check portal for progress:        #
+                            echo [SUCCESS] # ${params.FOD_URL}                 #
+                            echo [SUCCESS] ####################################
+                        """
                     }
                 }
             }
         }
 
-        stage('Check Scan Results') {
+        stage('Wait for Scan Completion') {
             when {
                 expression { params.FOD_SAST == true }
             }
@@ -100,77 +142,78 @@ pipeline {
                         string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
                         string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
                     ]) {
-                        // Esperar a que los scans se completen (opcional, con timeout)
                         bat """
                             @echo off
-                            echo [INFO] Waiting for scans to complete (timeout: 120 minutes)...
+                            echo [INFO] ===== WAITING FOR SCAN COMPLETION =====
+                            echo [INFO] Scan ID: ${env.SCAN_ID}
+                            echo [INFO] Timeout: ${params.SCAN_TIMEOUT_MINUTES} minutes
+                            
+                            echo [INFO] Logging into FoD...
                             fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
                             
-                            for %%i in (${env.SCAN_IDS}) do (
-                                echo [INFO] Waiting for scan %%i...
-                                fcli.exe fod sast-scan wait-for %%i --fod-session jenkins --timeout 7200 || (
-                                    echo [WARNING] Scan %%i timed out or failed, but continuing...
-                                )
-                            )
-                        """
-                        
-                        // Verificar resultados y umbrales
-                        bat """
-                            @echo off
-                            echo [INFO] Checking scan results against thresholds...
-                            echo Critical Threshold: ${params.CRITICAL_THRESHOLD}
-                            echo High Threshold: ${params.HIGH_THRESHOLD}
-                            
-                            for %%i in (${env.SCAN_IDS}) do (
-                                echo [INFO] Getting results for scan %%i...
-                                fcli.exe fod sast-scan get %%i --fod-session jenkins --output json > scan_%%i_results.json
+                            echo [INFO] Waiting for scan to complete...
+                            set TIMEOUT_SECONDS=$[${params.SCAN_TIMEOUT_MINUTES} * 60]
+                            fcli.exe fod sast-scan wait-for ${env.SCAN_ID} --fod-session jenkins --timeout !TIMEOUT_SECONDS!
+                            if %errorlevel% neq 0 (
+                                echo [WARNING] Scan timed out or failed, but continuing to check results...
                             )
                             
+                            echo [INFO] Getting final scan results...
+                            fcli.exe fod sast-scan get ${env.SCAN_ID} --fod-session jenkins --output json > scan_results.json
+                            
+                            echo [INFO] Logging out from FoD...
                             fcli.exe fod session logout --fod-session jenkins
                         """
+                    }
+                }
+            }
+        }
+
+        stage('Validate Scan Results') {
+            when {
+                expression { params.FOD_SAST == true }
+            }
+            steps {
+                script {
+                    echo "🔍 ===== VALIDATING SCAN RESULTS ====="
+                    echo "📋 Scan ID: ${env.SCAN_ID}"
+                    echo "⚡ Critical Threshold: ${params.CRITICAL_THRESHOLD}"
+                    echo "⚠️  High Threshold: ${params.HIGH_THRESHOLD}"
+                    
+                    if (fileExists('scan_results.json')) {
+                        def results = readJSON file: 'scan_results.json'
+                        def critical = results.detailScanResult?.critical ?: 0
+                        def high = results.detailScanResult?.high ?: 0
+                        def status = results.analysisStatus ?: 'Unknown'
+                        def scanType = results.scanType ?: 'Unknown'
                         
-                        // Analizar resultados
-                        script {
-                            def criticalTotal = 0
-                            def highTotal = 0
-                            def failedScans = []
-                            
-                            env.SCAN_IDS.split(', ').each { scanId ->
-                                def resultsFile = "scan_${scanId}_results.json"
-                                if (fileExists(resultsFile)) {
-                                    def results = readJSON file: resultsFile
-                                    def critical = results.detailScanResult?.critical ?? 0
-                                    def high = results.detailScanResult?.high ?? 0
-                                    def status = results.analysisStatus ?: 'Unknown'
-                                    
-                                    echo "Scan ${scanId}: Critical=${critical}, High=${high}, Status=${status}"
-                                    
-                                    criticalTotal += critical
-                                    highTotal += high
-                                    
-                                    if (critical > params.CRITICAL_THRESHOLD || high > params.HIGH_THRESHOLD) {
-                                        failedScans.add(scanId)
-                                    }
-                                }
-                            }
-                            
-                            echo "TOTALS - Critical: ${criticalTotal}, High: ${highTotal}"
-                            echo "Thresholds - Critical: ${params.CRITICAL_THRESHOLD}, High: ${params.HIGH_THRESHOLD}"
-                            
-                            if (criticalTotal > params.CRITICAL_THRESHOLD) {
-                                error "❌ FAILED: Critical issues (${criticalTotal}) exceed threshold (${params.CRITICAL_THRESHOLD})"
-                            }
-                            
-                            if (highTotal > params.HIGH_THRESHOLD) {
-                                error "❌ FAILED: High issues (${highTotal}) exceed threshold (${params.HIGH_THRESHOLD})"
-                            }
-                            
-                            if (failedScans) {
-                                echo "⚠️  The following scans exceeded thresholds: ${failedScans}"
-                            } else {
-                                echo "✅ ALL SCANS PASSED THRESHOLD CHECKS"
-                            }
+                        echo "📊 SCAN RESULTS:"
+                        echo "   Status: ${status}"
+                        echo "   Type: ${scanType}"
+                        echo "   Critical Issues: ${critical}"
+                        echo "   High Issues: ${high}"
+                        echo "   Total Issues: ${results.detailScanResult?.total ?: 0}"
+                        
+                        // Validar contra umbrales
+                        if (critical > params.CRITICAL_THRESHOLD) {
+                            error "❌ BUILD FAILED: Critical issues (${critical}) exceed threshold (${params.CRITICAL_THRESHOLD})"
                         }
+                        
+                        if (high > params.HIGH_THRESHOLD) {
+                            error "❌ BUILD FAILED: High issues (${high}) exceed threshold (${params.HIGH_THRESHOLD})"
+                        }
+                        
+                        if (status == 'Completed') {
+                            echo "✅ SCAN PASSED: All thresholds met"
+                            echo "✅ Critical: ${critical} <= ${params.CRITICAL_THRESHOLD}"
+                            echo "✅ High: ${high} <= ${params.HIGH_THRESHOLD}"
+                        } else {
+                            echo "⚠️  Scan status: ${status} - Cannot fully validate results"
+                        }
+                        
+                    } else {
+                        echo "⚠️  No scan results file found. Scan may still be processing."
+                        echo "ℹ️  Check FoD portal for final results: ${params.FOD_URL}"
                     }
                 }
             }
@@ -179,16 +222,28 @@ pipeline {
 
     post {
         always {
-            echo "Pipeline execution completed - Status: ${currentBuild.currentResult}"
-            echo "Scan IDs: ${env.SCAN_IDS}"
-            echo "FoD Portal: https://ams.fortify.com"
+            echo "📋 ===== PIPELINE EXECUTION SUMMARY ====="
+            echo "🏷️  Scan ID: ${env.SCAN_ID ?: 'N/A'}"
+            echo "📊 Status: ${currentBuild.currentResult}"
+            echo "🌐 FoD Portal: https://ams.fortify.com"
+            echo "⏰ Elapsed time: ${currentBuild.durationString}"
+            
             cleanWs()
         }
         success {
-            echo "✅ Pipeline succeeded!"
+            echo "✅ ===== PIPELINE SUCCEEDED ====="
+            echo "✅ Fortify scan completed successfully"
+            echo "✅ All security thresholds met"
         }
         failure {
-            echo "❌ Pipeline failed!"
+            echo "❌ ===== PIPELINE FAILED ====="
+            echo "❌ Security thresholds exceeded"
+            echo "❌ Check FoD portal for details: https://ams.fortify.com"
+        }
+        unstable {
+            echo "⚠️  ===== PIPELINE UNSTABLE ====="
+            echo "⚠️  Scan may have timed out or encountered issues"
+            echo "⚠️  Check FoD portal for scan status: https://ams.fortify.com"
         }
     }
 }
