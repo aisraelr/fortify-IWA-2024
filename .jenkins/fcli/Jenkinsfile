@@ -1,7 +1,7 @@
 pipeline {
     agent any
     environment {
-        FOD_SESSION = 'jenkins'  // Nombre de la sesión FoD configurada en tu fcli
+        FOD_SESSION = 'jenkins'
     }
     stages {
 
@@ -16,7 +16,7 @@ pipeline {
             steps {
                 echo "🛡️ Starting FoD SAST scan..."
                 
-                // Inicia el scan y guarda el JSON crudo
+                // Ejecuta el scan y guarda toda la salida
                 bat """
                 fcli.exe fod sast-scan start ^
                     --rel 1388854 ^
@@ -26,15 +26,16 @@ pipeline {
                     --output json 1>curScan_raw.txt 2>curScan.err
                 """
 
-                // Extrae únicamente el JSON del output
+                // Extrae sólo el JSON usando PowerShell
                 powershell """
-                (Get-Content curScan_raw.txt) -join '' | Select-String -Pattern '{.*}' | ForEach-Object { \$_ } | Set-Content curScan.json
+                \$jsonLine = Select-String -Path curScan_raw.txt -Pattern '{.*}' | ForEach-Object { \$_ -replace '^.*?({.*}).*$', '\$1' }
+                \$jsonLine | Set-Content -Encoding UTF8 curScan.json
                 """
 
-                // Lee el JSON en Groovy
+                // Lee el JSON limpio en Groovy
                 script {
                     def curScan = readJSON file: 'curScan.json'
-                    echo "Scan started. Scan ID: ${curScan.scanId}"
+                    echo "Scan started successfully! Scan ID: ${curScan.scanId}"
                 }
             }
         }
@@ -44,10 +45,11 @@ pipeline {
                 echo "⏳ Waiting for scan completion..."
 
                 script {
-                    // Espera a que el scan termine usando la variable de store
+                    // Usa la variable de store directamente
                     bat """
                     fcli.exe fod sast-scan wait-for ::curScan:: ^
-                        --fod-session %FOD_SESSION%
+                        --fod-session %FOD_SESSION% ^
+                        --timeout 1h
                     """
                 }
             }
@@ -58,7 +60,6 @@ pipeline {
                 echo "📊 Retrieving scan results..."
 
                 script {
-                    // Guardar resultados en un archivo JSON
                     bat """
                     fcli.exe fod sast-scan get-results ^
                         ::curScan:: ^
@@ -68,7 +69,7 @@ pipeline {
                     """
 
                     def results = readJSON file: 'scan_results.json'
-                    echo "Scan results retrieved. Analysis status: ${results.analysisStatusType}"
+                    echo "Scan finished. Analysis status: ${results.analysisStatusType}"
                 }
             }
         }
