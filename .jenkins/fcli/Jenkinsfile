@@ -1,5 +1,8 @@
 #!/usr/bin/env groovy
 
+// Variable global para el Scan ID
+def GLOBAL_SCAN_ID = ""
+
 pipeline {
     agent any
 
@@ -25,7 +28,6 @@ pipeline {
         FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
         GIT_URL        = "https://github.com/aisraelr/fortify-IWA-2024.git"
         GIT_REPO_NAME  = "fortify-IWA-2024"
-        SCAN_ID        = ""   // lo dejamos vacío
     }
 
     stages {
@@ -52,12 +54,12 @@ pipeline {
         stage('FoD SAST Scan') {
             steps {
                 script {
-                    if (params.FOD_SAST == true) {
+                    if (params.FOD_SAST) {
                         withCredentials([
                             string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
                             string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
                         ]) {
-                            // Paso 1: Ejecutar el scan y guardar output en archivo
+                            // Ejecutar scan
                             bat """
                                 @echo off
                                 set FCLI_HOME=C:\\Tools\\fcli
@@ -80,22 +82,19 @@ pipeline {
                                 echo [INFO] Logging out...
                                 %FCLI_HOME%\\fcli.exe fod session logout --fod-session jenkins
                             """
-                    
-                            // Paso 2: Leer el archivo y extraer Scan ID
+
+                            // Leer output y extraer Scan ID
                             def scanOutput = readFile('scan_output.txt').trim()
                             echo "Scan Output: ${scanOutput}"
-                            
-                            // Método simple para extraer el Scan ID
                             def scanId = extractScanId(scanOutput)
                             echo "✅ Scan ID capturado(1): ${scanId}"
 
                             if (scanId) {
-                                script {
-                                    def scanIdStr = scanId.toString().trim()
-                                    currentBuild.displayName = "#${BUILD_NUMBER} - Scan ${scanIdStr}"
-                                    env.SCAN_ID = scanIdStr  // 🔑 ahora sí queda en env
-                                    echo "✅ Scan ID capturado(2): ${env.SCAN_ID}"
-                                }
+                                // Guardar en variable global y env
+                                GLOBAL_SCAN_ID = scanId.toString().trim()
+                                env.SCAN_ID = GLOBAL_SCAN_ID
+                                currentBuild.displayName = "#${BUILD_NUMBER} - Scan ${GLOBAL_SCAN_ID}"
+                                echo "✅ Scan ID capturado(2): ${GLOBAL_SCAN_ID}"
                             } else {
                                 error "❌ No se pudo extraer el Scan ID del output"
                             }
@@ -108,7 +107,7 @@ pipeline {
         stage('Debug Scan ID') {
             steps {
                 script {
-                    echo "🔍 Debug: env.SCAN_ID = ${env.SCAN_ID ?: 'null'}"
+                    echo "🔍 Debug Scan ID = ${GLOBAL_SCAN_ID ?: 'null'}"
                 }
             }
         }
@@ -116,26 +115,26 @@ pipeline {
         stage('Wait for Scan Completion') {
             steps {
                 script {
-                    if (params.FOD_SAST == true && env.SCAN_ID) {
+                    if (params.FOD_SAST && GLOBAL_SCAN_ID) {
                         withCredentials([
                             string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
                             string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
                         ]) {
                             bat """
                                 @echo off
-                                echo [INFO] Waiting for scan ${env.SCAN_ID} to complete...
+                                echo [INFO] Waiting for scan ${GLOBAL_SCAN_ID} to complete...
                                 
                                 fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
                                 
                                 set /a TIMEOUT_SECONDS=${env.SCAN_TIMEOUT_MINUTES_INT} * 60
-                                fcli.exe fod sast-scan wait-for ${env.SCAN_ID} --fod-session jenkins --timeout %TIMEOUT_SECONDS%
+                                fcli.exe fod sast-scan wait-for ${GLOBAL_SCAN_ID} --fod-session jenkins --timeout %TIMEOUT_SECONDS%
                                 if %errorlevel% neq 0 (
                                     echo [ERROR] Scan timed out or failed
                                     exit 1
                                 )
                                 
                                 echo [INFO] Getting scan results...
-                                fcli.exe fod sast-scan get ${env.SCAN_ID} --fod-session jenkins --output json > scan_results.json
+                                fcli.exe fod sast-scan get ${GLOBAL_SCAN_ID} --fod-session jenkins --output json > scan_results.json
                                 
                                 fcli.exe fod session logout --fod-session jenkins
                             """
@@ -148,20 +147,19 @@ pipeline {
         stage('Validate Scan Results') {
             steps {
                 script {
-                    if (params.FOD_SAST == true && env.SCAN_ID && fileExists('scan_results.json')) {
+                    if (params.FOD_SAST && GLOBAL_SCAN_ID && fileExists('scan_results.json')) {
                         def results = readJSON file: 'scan_results.json'
                         def critical = results.detailScanResult?.critical ?: 0
                         def high = results.detailScanResult?.high ?: 0
                         def status = results.analysisStatus ?: 'Unknown'
                         
-                        echo "📊 SCAN RESULTS for ID: ${env.SCAN_ID}"
+                        echo "📊 SCAN RESULTS for ID: ${GLOBAL_SCAN_ID}"
                         echo "   Status: ${status}"
                         echo "   Critical Issues: ${critical}"
                         echo "   High Issues: ${high}"
                         echo "   Threshold - Critical: ${env.CRITICAL_THRESHOLD_INT}"
                         echo "   Threshold - High: ${env.HIGH_THRESHOLD_INT}"
                         
-                        // Validar contra umbrales
                         if (critical > env.CRITICAL_THRESHOLD_INT) {
                             error "❌ BUILD FAILED: Critical issues (${critical}) > threshold (${env.CRITICAL_THRESHOLD_INT})"
                         }
@@ -184,10 +182,9 @@ pipeline {
         always {
             echo "📋 RESUMEN EJECUCIÓN"
             echo "   Status: ${currentBuild.currentResult}"
-            echo "   Scan ID: ${env.SCAN_ID ?: 'N/A'}"
+            echo "   Scan ID: ${GLOBAL_SCAN_ID ?: 'N/A'}"
             echo "   FoD Portal: https://ams.fortify.com"
             
-            // Limpieza
             bat """
                 @echo off
                 if exist fcli-windows.zip del fcli-windows.zip
@@ -204,43 +201,37 @@ pipeline {
         }
         failure {
             echo "❌ PIPELINE FALLIDO"
-            echo "❌ Scan ID: ${env.SCAN_ID ?: 'N/A'}"
+            echo "❌ Scan ID: ${GLOBAL_SCAN_ID ?: 'N/A'}"
             echo "❌ Revisar detalles en: https://ams.fortify.com"
         }
     }
 }
 
-// Función para extraer Scan ID sin usar Matcher (evita problemas de serialización)
+// Función para extraer Scan ID
 def extractScanId(String output) {
     echo "Buscando Scan ID en el output..."
-    
-    // Dividir el output en líneas
     def lines = output.split('\\r?\\n')
     
-    // Buscar la línea que contiene el patrón del scan
     for (line in lines) {
-        // Buscar líneas que tengan el formato de tabla de scan
         if (line.contains('Static') && line.contains('Pending') && line.contains('STARTED')) {
             echo "Línea encontrada: ${line}"
-            
-            // Dividir por espacios y buscar números de 8+ dígitos
             def parts = line.trim().split('\\s+')
             for (part in parts) {
                 if (part.isNumber() && part.length() >= 8) {
                     echo "✅ Scan ID encontrado: ${part}"
-                    return part
+                    return part.toString().trim()
                 }
             }
         }
     }
     
-    // Si no se encuentra en el formato esperado, buscar cualquier número de 8+ dígitos
+    // Fallback: cualquier número >= 8 dígitos
     for (line in lines) {
         def words = line.trim().split('\\s+')
         for (word in words) {
             if (word.isNumber() && word.length() >= 8) {
                 echo "✅ Scan ID potencial encontrado: ${word}"
-                return word
+                return word.toString().trim()
             }
         }
     }
