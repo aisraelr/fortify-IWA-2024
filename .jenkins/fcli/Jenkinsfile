@@ -56,13 +56,13 @@ pipeline {
         stage('FoD SAST Scan') {
             steps {
                 script {
-                    // Verificar si se debe ejecutar el scan
                     if (params.FOD_SAST == true) {
                         withCredentials([
                             string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
                             string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
                         ]) {
-                            bat """
+                            // Ejecutar el comando y capturar el output COMPLETO
+                            def scanOutput = bat(script: """
                                 @echo off
                                 echo [INFO] Downloading fcli for Windows v3.8.1...
                                 curl -L https://github.com/fortify/fcli/releases/download/v3.8.1/fcli-windows.zip -o fcli-windows.zip
@@ -84,18 +84,50 @@ pipeline {
                                 
                                 echo [INFO] Logging out from FoD...
                                 fcli.exe fod session logout --fod-session jenkins
-                            """
+                            """, returnStdout: true).trim()
                             
-                            echo "✅ Scan submitted successfully!"
-                            echo "ℹ️  Check FoD portal for Scan ID: ${params.FOD_URL}"
-                            echo "ℹ️  Release ID: ${params.FOD_RELEASE_ID}"
+                            // DEBUG: Mostrar el output completo
+                            echo "=== FULL OUTPUT ==="
+                            echo scanOutput
+                            echo "==================="
                             
-                            // Para versiones antiguas, podemos pedir el Scan ID manualmente
-                            env.SCAN_ID = input(
-                                message: 'Please enter the FoD Scan ID from the portal', 
-                                parameters: [string(name: 'SCAN_ID', description: 'FoD Scan ID')]
-                            )
-                            echo "✅ Manual Scan ID entered: ${env.SCAN_ID}"
+                            // Extraer el Scan ID usando una expresión regular más simple
+                            def scanId = null
+                            
+                            // Buscar el patrón: número de 8 dígitos después de "Id"
+                            def pattern = /Id\\s+(\\d+)\\s+Static\\s+Pending/
+                            def matcher = (scanOutput =~ pattern)
+                            
+                            if (matcher.find()) {
+                                scanId = matcher[0][1]
+                                echo "✅ Scan ID encontrado automáticamente: ${scanId}"
+                                env.SCAN_ID = scanId
+                            } else {
+                                echo "⚠️  No se pudo extraer el Scan ID automáticamente"
+                                echo "🔍 Buscando cualquier número de 8 dígitos..."
+                                
+                                // Buscar cualquier número de 8 dígitos en el output
+                                def digitPattern = /\\b(\\d{8,})\\b/
+                                def digitMatcher = (scanOutput =~ digitPattern)
+                                
+                                if (digitMatcher.find()) {
+                                    scanId = digitMatcher[0][1]
+                                    echo "✅ Posible Scan ID encontrado: ${scanId}"
+                                    env.SCAN_ID = scanId
+                                } else {
+                                    echo "❌ No se encontró ningún Scan ID en el output"
+                                    
+                                    // Pedir input manual con el valor por defecto del Scan ID visible
+                                    env.SCAN_ID = input(
+                                        message: 'Por favor ingresa el Scan ID de FoD (ej: 15893265)', 
+                                        parameters: [string(name: 'SCAN_ID', defaultValue: '15893265', description: 'Scan ID from FoD portal')]
+                                    )
+                                    echo "✅ Scan ID ingresado manualmente: ${env.SCAN_ID}"
+                                }
+                            }
+                            
+                            echo "🎯 Scan ID definitivo: ${env.SCAN_ID}"
+                            echo "🌐 Ver en portal: ${params.FOD_URL}"
                         }
                     } else {
                         echo "⏭️  FoD SAST scan skipped by parameter choice"
