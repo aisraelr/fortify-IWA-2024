@@ -93,7 +93,7 @@ pipeline {
                                 currentBuild.displayName = "#${BUILD_NUMBER} - Scan ${scanId}"  // útil para verlo en Jenkins UI
                                  SCAN_ID = "${scanId}"
                                 // Asignar a env como String
-                                echo "✅ Scan ID capturado(2): %SCAN_ID%"
+                                echo "✅ Scan ID capturado(2): ${SCAN_ID}"
                             } else {
                                 error "❌ No se pudo extraer el Scan ID del output"
                             }
@@ -106,26 +106,26 @@ pipeline {
         stage('Wait for Scan Completion') {
             steps {
                 script {
-                    if (params.FOD_SAST == true && %SCAN_ID%) {
+                    if (params.FOD_SAST == true && ${SCAN_ID}) {
                         withCredentials([
                             string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
                             string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
                         ]) {
                             bat """
                                 @echo off
-                                echo [INFO] Waiting for scan %SCAN_ID% to complete...
+                                echo [INFO] Waiting for scan ${SCAN_ID} to complete...
                                 
                                 fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
                                 
                                 set /a TIMEOUT_SECONDS=${env.SCAN_TIMEOUT_MINUTES_INT} * 60
-                                fcli.exe fod sast-scan wait-for %SCAN_ID% --fod-session jenkins --timeout %TIMEOUT_SECONDS%
+                                fcli.exe fod sast-scan wait-for ${SCAN_ID} --fod-session jenkins --timeout %TIMEOUT_SECONDS%
                                 if %errorlevel% neq 0 (
                                     echo [ERROR] Scan timed out or failed
                                     exit 1
                                 )
                                 
                                 echo [INFO] Getting scan results...
-                                fcli.exe fod sast-scan get %SCAN_ID% --fod-session jenkins --output json > scan_results.json
+                                fcli.exe fod sast-scan get ${SCAN_ID} --fod-session jenkins --output json > scan_results.json
                                 
                                 fcli.exe fod session logout --fod-session jenkins
                             """
@@ -138,13 +138,13 @@ pipeline {
         stage('Validate Scan Results') {
             steps {
                 script {
-                    if (params.FOD_SAST == true && %SCAN_ID% && fileExists('scan_results.json')) {
+                    if (params.FOD_SAST == true && ${SCAN_ID} && fileExists('scan_results.json')) {
                         def results = readJSON file: 'scan_results.json'
                         def critical = results.detailScanResult?.critical ?: 0
                         def high = results.detailScanResult?.high ?: 0
                         def status = results.analysisStatus ?: 'Unknown'
                         
-                        echo "📊 SCAN RESULTS for ID: %SCAN_ID%"
+                        echo "📊 SCAN RESULTS for ID: ${SCAN_ID}"
                         echo "   Status: ${status}"
                         echo "   Critical Issues: ${critical}"
                         echo "   High Issues: ${high}"
@@ -174,7 +174,7 @@ pipeline {
         always {
             echo "📋 RESUMEN EJECUCIÓN"
             echo "   Status: ${currentBuild.currentResult}"
-            echo "   Scan ID: %SCAN_ID% ?: 'N/A'}"
+            echo "   Scan ID: ${SCAN_ID} ?: 'N/A'}"
             echo "   FoD Portal: https://ams.fortify.com"
             
             // Limpieza
@@ -194,7 +194,7 @@ pipeline {
         }
         failure {
             echo "❌ PIPELINE FALLIDO"
-            echo "❌ Scan ID: %SCAN_ID% ?: 'N/A'}"
+            echo "❌ Scan ID: ${SCAN_ID} ?: 'N/A'}"
             echo "❌ Revisar detalles en: https://ams.fortify.com"
         }
     }
