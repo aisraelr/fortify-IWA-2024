@@ -1,0 +1,57 @@
+#!/usr/bin/env groovy
+
+pipeline {
+    agent any
+
+    parameters {
+        booleanParam(name: 'FOD_SAST', defaultValue: true,
+            description: 'Run Fortify on Demand SAST scan using Jenkins plugin')
+    }
+
+    environment {
+        APP_NAME       = "IWA-JAVA-2024"
+        APP_VERSION    = "Github-2025"
+        GIT_URL        = scm.getUserRemoteConfigs()[0].getUrl()
+        GIT_REPO_NAME  = GIT_URL.split('/').last().replace('.git', '')
+
+        // Estas credenciales deben estar configuradas en Jenkins
+        FOD_CLIENT_ID     = credentials('iwa-fod-client-id')
+        FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
+
+        FOD_RELEASE_ID = "${params.FOD_RELEASE_ID ?: '0'}"
+    }
+
+    stages {
+        stage('Build') {
+            steps {
+                sh "mvn clean package -DskipTests"
+                junit '**/target/surefire-reports/TEST-*.xml'
+                archiveArtifacts artifacts: "target/*.jar", fingerprint: true
+                stash includes: "target/*.jar", name: "${env.APP_NAME}_release"
+            }
+        }
+
+        stage('FoD SAST with Plugin') {
+            when {
+                expression { params.FOD_SAST == true }
+            }
+            steps {
+                script {
+                    fodStaticAssessment releaseId: "${env.FOD_RELEASE_ID}",
+                        isMicroservice: false,
+                        openSourceScan: 'false',
+                        inProgressBuildResultType: 'WarnBuild',
+                        inProgressScanActionType: 'Queue',
+                        remediationScanPreferenceType: 'NonRemediationScanOnly',
+                        scanCentral: 'Maven',
+                        scanCentralBuildCommand: 'clean package -DskipTests',
+                        scanCentralBuildFile: 'pom.xml'
+
+                    fodPollResults releaseId: "${env.FOD_RELEASE_ID}",
+                        policyFailureBuildResultPreference: 1,
+                        pollingInterval: 5
+                }
+            }
+        }
+    }
+}

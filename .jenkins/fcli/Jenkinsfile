@@ -1,0 +1,57 @@
+#!/usr/bin/env groovy
+
+pipeline {
+    agent any
+
+    parameters {
+        booleanParam(name: 'FOD_SAST', defaultValue: true,
+            description: 'Run Fortify on Demand SAST scan using fcli')
+    }
+
+    environment {
+        // Ajusta si cambia el nombre o versión de la app
+        APP_NAME       = "IWA-JAVA-2024"
+        APP_VERSION    = "Github-2025"
+        GIT_URL        = scm.getUserRemoteConfigs()[0].getUrl()
+        GIT_REPO_NAME  = GIT_URL.split('/').last().replace('.git', '')
+
+        // Credenciales
+        FOD_CLIENT_ID     = credentials('iwa-fod-client-id')
+        FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
+
+        // URL y Release ID configurables
+        FOD_URL        = "${params.FOD_URL ?: 'https://api.ams.fortify.com'}"
+        FOD_RELEASE_ID = "${params.FOD_RELEASE_ID ?: '1388854'}"
+
+        // Variables estilo GitHub
+        GITHUB_SHA        = sh (script: "git rev-parse HEAD", returnStdout: true).trim()
+        GITHUB_REPOSITORY = "${env.GIT_REPO_NAME}"
+        GITHUB_REF_NAME   = "jenkins"
+    }
+
+    stages {
+        stage('Build') {
+            steps {
+                sh "mvn clean package -DskipTests"
+                junit '**/target/surefire-reports/TEST-*.xml'
+                archiveArtifacts artifacts: "target/*.jar", fingerprint: true
+                stash includes: "target/*.jar", name: "${env.APP_NAME}_release"
+            }
+        }
+
+        stage('FoD SAST with fcli') {
+            when {
+                expression { params.FOD_SAST == true }
+            }
+            steps {
+                sh """
+                    curl -L https://github.com/fortify/fcli/releases/download/latest/fcli-linux.tgz | tar -xz fcli
+                    ./fcli fod session login --client-id ${env.FOD_CLIENT_ID} --client-secret ${env.FOD_CLIENT_SECRET} --url ${env.FOD_URL} --fod-session jenkins
+                    ./fcli fod sast-scan start --release-id ${env.FOD_RELEASE_ID} --upload target/*.jar --fod-session jenkins --store curScan
+                    ./fcli fod sast-scan wait-for ::curScan:: --fod-session jenkins
+                    ./fcli fod session logout --fod-session jenkins
+                """
+            }
+        }
+    }
+}
