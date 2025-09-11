@@ -63,15 +63,19 @@ pipeline {
                 """
                 powershell """
                 \$content = Get-Content curScan_raw.txt -Raw
-                \$jsonMatch = [regex]::Matches(\$content, '{.*}', [System.Text.RegularExpressions.RegexOptions]::Singleline)[-1].Value
+                \$jsonMatches = [regex]::Matches(\$content, '{.*}', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+                if (\$jsonMatches.Count -eq 0) { Write-Error 'No valid JSON found'; exit 1 }
+                \$jsonMatch = \$jsonMatches[\$jsonMatches.Count - 1].Value
                 \$jsonMatch | Set-Content curScan.json
                 """
                 script {
+                // Leer JSON ya limpio
                 def curScan = readJSON file: 'curScan.json'
                 echo "Scan started: ${curScan.scanId}"
                 }
             }
         }
+
 
 
         stage('Wait for Scan Completion') {
