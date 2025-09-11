@@ -1,8 +1,5 @@
 #!/usr/bin/env groovy
 
-// Variable global para el Scan ID
-def GLOBAL_SCAN_ID = ""
-
 pipeline {
     agent any
 
@@ -28,6 +25,8 @@ pipeline {
         FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
         GIT_URL        = "https://github.com/aisraelr/fortify-IWA-2024.git"
         GIT_REPO_NAME  = "fortify-IWA-2024"
+        SCAN_ID        = ""
+        FCLI_HOME      = "${env.WORKSPACE}\\fcli"
     }
 
     stages {
@@ -51,6 +50,24 @@ pipeline {
             }
         }
 
+        stage('Prepare fcli') {
+            steps {
+                script {
+                    bat """
+                        @echo off
+                        if not exist "${FCLI_HOME}" mkdir "${FCLI_HOME}"
+                        if not exist "${FCLI_HOME}\\fcli.exe" (
+                            echo [INFO] Descargando fcli...
+                            curl -L https://github.com/fortify/fcli/releases/download/v3.8.1/fcli-windows.zip -o "${FCLI_HOME}\\fcli.zip"
+                            tar -xf "${FCLI_HOME}\\fcli.zip" -C "${FCLI_HOME}"
+                        ) else (
+                            echo [INFO] fcli.exe ya existe en ${FCLI_HOME}
+                        )
+                    """
+                }
+            }
+        }
+
         stage('FoD SAST Scan') {
             steps {
                 script {
@@ -59,42 +76,32 @@ pipeline {
                             string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
                             string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
                         ]) {
-                            // Ejecutar scan
+                            def FCLI_CMD = "${FCLI_HOME}\\fcli.exe"
+
+                            // Ejecutar el scan
                             bat """
                                 @echo off
-                                set FCLI_HOME=C:\\Tools\\fcli
-
-                                if exist %FCLI_HOME%\\fcli.exe (
-                                    echo [INFO] fcli.exe ya existe en %FCLI_HOME%
-                                ) else (
-                                    echo [INFO] Descargando fcli en %FCLI_HOME%...
-                                    if not exist %FCLI_HOME% mkdir %FCLI_HOME%
-                                    curl -L https://github.com/fortify/fcli/releases/download/v3.8.1/fcli-windows.zip -o %FCLI_HOME%\\fcli-windows.zip
-                                    tar -xf %FCLI_HOME%\\fcli-windows.zip -C %FCLI_HOME% fcli.exe
-                                )
-
                                 echo [INFO] Logging into FoD...
-                                %FCLI_HOME%\\fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
+                                ${FCLI_CMD} fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
 
                                 echo [INFO] Uploading fat JAR...
-                                %FCLI_HOME%\\fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\iwa.jar" --fod-session jenkins > scan_output.txt
+                                ${FCLI_CMD} fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\iwa.jar" --fod-session jenkins > scan_output.txt
 
                                 echo [INFO] Logging out...
-                                %FCLI_HOME%\\fcli.exe fod session logout --fod-session jenkins
+                                ${FCLI_CMD} fod session logout --fod-session jenkins
                             """
 
-                            // Leer output y extraer Scan ID
+                            // Leer archivo y extraer Scan ID
                             def scanOutput = readFile('scan_output.txt').trim()
                             echo "Scan Output: ${scanOutput}"
+
                             def scanId = extractScanId(scanOutput)
                             echo "✅ Scan ID capturado(1): ${scanId}"
 
                             if (scanId) {
-                                // Guardar en variable global y env
-                                GLOBAL_SCAN_ID = scanId.toString().trim()
-                                env.SCAN_ID = GLOBAL_SCAN_ID
-                                currentBuild.displayName = "#${BUILD_NUMBER} - Scan ${GLOBAL_SCAN_ID}"
-                                echo "✅ Scan ID capturado(2): ${GLOBAL_SCAN_ID}"
+                                currentBuild.displayName = "#${BUILD_NUMBER} - Scan ${scanId}"
+                                env.SCAN_ID = "${scanId}" // Asignar a env para otros stages
+                                echo "✅ Scan ID capturado(2): ${env.SCAN_ID}"
                             } else {
                                 error "❌ No se pudo extraer el Scan ID del output"
                             }
@@ -107,7 +114,7 @@ pipeline {
         stage('Debug Scan ID') {
             steps {
                 script {
-                    echo "🔍 Debug Scan ID = ${GLOBAL_SCAN_ID ?: 'null'}"
+                    echo "🛠 Debug Scan ID = ${env.SCAN_ID}"
                 }
             }
         }
@@ -115,28 +122,28 @@ pipeline {
         stage('Wait for Scan Completion') {
             steps {
                 script {
-                    if (params.FOD_SAST && GLOBAL_SCAN_ID) {
+                    if (params.FOD_SAST && env.SCAN_ID) {
                         withCredentials([
                             string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
                             string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
                         ]) {
+                            def FCLI_CMD = "${FCLI_HOME}\\fcli.exe"
                             bat """
                                 @echo off
-                                echo [INFO] Waiting for scan ${GLOBAL_SCAN_ID} to complete...
-                                
-                                fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
-                                
+                                echo [INFO] Waiting for scan ${env.SCAN_ID} to complete...
+
+                                ${FCLI_CMD} fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
+
                                 set /a TIMEOUT_SECONDS=${env.SCAN_TIMEOUT_MINUTES_INT} * 60
-                                fcli.exe fod sast-scan wait-for ${GLOBAL_SCAN_ID} --fod-session jenkins --timeout %TIMEOUT_SECONDS%
+                                ${FCLI_CMD} fod sast-scan wait-for ${env.SCAN_ID} --fod-session jenkins --timeout %TIMEOUT_SECONDS%
                                 if %errorlevel% neq 0 (
                                     echo [ERROR] Scan timed out or failed
                                     exit 1
                                 )
-                                
-                                echo [INFO] Getting scan results...
-                                fcli.exe fod sast-scan get ${GLOBAL_SCAN_ID} --fod-session jenkins --output json > scan_results.json
-                                
-                                fcli.exe fod session logout --fod-session jenkins
+
+                                ${FCLI_CMD} fod sast-scan get ${env.SCAN_ID} --fod-session jenkins --output json > scan_results.json
+
+                                ${FCLI_CMD} fod session logout --fod-session jenkins
                             """
                         }
                     }
@@ -147,29 +154,28 @@ pipeline {
         stage('Validate Scan Results') {
             steps {
                 script {
-                    if (params.FOD_SAST && GLOBAL_SCAN_ID && fileExists('scan_results.json')) {
+                    if (params.FOD_SAST && env.SCAN_ID && fileExists('scan_results.json')) {
                         def results = readJSON file: 'scan_results.json'
                         def critical = results.detailScanResult?.critical ?: 0
                         def high = results.detailScanResult?.high ?: 0
                         def status = results.analysisStatus ?: 'Unknown'
-                        
-                        echo "📊 SCAN RESULTS for ID: ${GLOBAL_SCAN_ID}"
+
+                        echo "📊 SCAN RESULTS for ID: ${env.SCAN_ID}"
                         echo "   Status: ${status}"
                         echo "   Critical Issues: ${critical}"
                         echo "   High Issues: ${high}"
                         echo "   Threshold - Critical: ${env.CRITICAL_THRESHOLD_INT}"
                         echo "   Threshold - High: ${env.HIGH_THRESHOLD_INT}"
-                        
+
                         if (critical > env.CRITICAL_THRESHOLD_INT) {
                             error "❌ BUILD FAILED: Critical issues (${critical}) > threshold (${env.CRITICAL_THRESHOLD_INT})"
                         }
-                        
+
                         if (high > env.HIGH_THRESHOLD_INT) {
                             error "❌ BUILD FAILED: High issues (${high}) > threshold (${env.HIGH_THRESHOLD_INT})"
                         }
-                        
+
                         echo "✅ SCAN PASSED: All thresholds met"
-                        
                     } else {
                         error "❌ No se pudieron obtener resultados del scan"
                     }
@@ -182,13 +188,13 @@ pipeline {
         always {
             echo "📋 RESUMEN EJECUCIÓN"
             echo "   Status: ${currentBuild.currentResult}"
-            echo "   Scan ID: ${GLOBAL_SCAN_ID ?: 'N/A'}"
+            echo "   Scan ID: ${env.SCAN_ID ?: 'N/A'}"
             echo "   FoD Portal: https://ams.fortify.com"
-            
+
             bat """
                 @echo off
-                if exist fcli-windows.zip del fcli-windows.zip
-                if exist fcli.exe del fcli.exe
+                if exist "${FCLI_HOME}\\fcli.zip" del "${FCLI_HOME}\\fcli.zip"
+                if exist "${FCLI_HOME}\\fcli.exe" del "${FCLI_HOME}\\fcli.exe"
                 if exist scan_output.txt del scan_output.txt
                 if exist scan_results.json del scan_results.json
             """
@@ -201,7 +207,7 @@ pipeline {
         }
         failure {
             echo "❌ PIPELINE FALLIDO"
-            echo "❌ Scan ID: ${GLOBAL_SCAN_ID ?: 'N/A'}"
+            echo "❌ Scan ID: ${env.SCAN_ID ?: 'N/A'}"
             echo "❌ Revisar detalles en: https://ams.fortify.com"
         }
     }
@@ -211,7 +217,7 @@ pipeline {
 def extractScanId(String output) {
     echo "Buscando Scan ID en el output..."
     def lines = output.split('\\r?\\n')
-    
+
     for (line in lines) {
         if (line.contains('Static') && line.contains('Pending') && line.contains('STARTED')) {
             echo "Línea encontrada: ${line}"
@@ -219,23 +225,23 @@ def extractScanId(String output) {
             for (part in parts) {
                 if (part.isNumber() && part.length() >= 8) {
                     echo "✅ Scan ID encontrado: ${part}"
-                    return part.toString().trim()
+                    return part
                 }
             }
         }
     }
-    
-    // Fallback: cualquier número >= 8 dígitos
+
+    // Buscar cualquier número de 8+ dígitos
     for (line in lines) {
         def words = line.trim().split('\\s+')
         for (word in words) {
             if (word.isNumber() && word.length() >= 8) {
                 echo "✅ Scan ID potencial encontrado: ${word}"
-                return word.toString().trim()
+                return word
             }
         }
     }
-    
+
     echo "❌ No se encontró Scan ID en el output"
     return null
 }
