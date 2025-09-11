@@ -15,7 +15,7 @@ pipeline {
                     branches: [[name: '*/main']],
                     userRemoteConfigs: [[
                         url: 'https://github.com/aisraelr/fortify-IWA-2024.git',
-                        credentialsId: 'GitHub_Personal'
+                        credentialsId: 'GitHub'
                     ]]
                 ])
             }
