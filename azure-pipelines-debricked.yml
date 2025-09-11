@@ -1,5 +1,5 @@
-trigger:
-- none  # No se ejecuta automáticamente
+trigger: none
+pr: none
 
 pool:
   name: Default
