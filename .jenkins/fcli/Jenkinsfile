@@ -80,10 +80,11 @@ pipeline {
                             
                             // Método simple para extraer el Scan ID
                             def scanId = extractScanId(scanOutput)
-                            
+                            echo "✅ Scan ID capturado(1): ${scanId}"
+
                             if (scanId) {
                                 env.SCAN_ID = scanId
-                                echo "✅ Scan ID capturado: ${env.SCAN_ID}"
+                                echo "✅ Scan ID capturado(2): ${env.SCAN_ID}"
                             } else {
                                 error "❌ No se pudo extraer el Scan ID del output"
                             }
