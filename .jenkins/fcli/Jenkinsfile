@@ -60,20 +60,27 @@ pipeline {
                             // Paso 1: Ejecutar el scan y guardar output en archivo
                             bat """
                                 @echo off
-                                echo [INFO] Downloading fcli...
-                                curl -L https://github.com/fortify/fcli/releases/download/v3.8.1/fcli-windows.zip -o fcli-windows.zip
-                                tar -xf fcli-windows.zip fcli.exe
-                                
+                                set FCLI_HOME=C:\\Tools\\fcli
+
+                                if exist %FCLI_HOME%\\fcli.exe (
+                                    echo [INFO] fcli.exe ya existe en %FCLI_HOME%
+                                ) else (
+                                    echo [INFO] Descargando fcli en %FCLI_HOME%...
+                                    if not exist %FCLI_HOME% mkdir %FCLI_HOME%
+                                    curl -L https://github.com/fortify/fcli/releases/download/v3.8.1/fcli-windows.zip -o %FCLI_HOME%\\fcli-windows.zip
+                                    tar -xf %FCLI_HOME%\\fcli-windows.zip -C %FCLI_HOME% fcli.exe
+                                )
+
                                 echo [INFO] Logging into FoD...
-                                fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
-                                
+                                %FCLI_HOME%\\fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
+
                                 echo [INFO] Uploading fat JAR...
-                                fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\\\iwa.jar" --fod-session jenkins > scan_output.txt
-                                
+                                %FCLI_HOME%\\fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\iwa.jar" --fod-session jenkins > scan_output.txt
+
                                 echo [INFO] Logging out...
-                                fcli.exe fod session logout --fod-session jenkins
+                                %FCLI_HOME%\\fcli.exe fod session logout --fod-session jenkins
                             """
-                            
+                    
                             // Paso 2: Leer el archivo y extraer Scan ID
                             def scanOutput = readFile('scan_output.txt').trim()
                             echo "Scan Output: ${scanOutput}"
@@ -83,7 +90,9 @@ pipeline {
                             echo "✅ Scan ID capturado(1): ${scanId}"
 
                             if (scanId) {
-                                env.SCAN_ID = scanId.toString().trim()
+                                currentBuild.displayName = "#${BUILD_NUMBER} - Scan ${scanId}"  // útil para verlo en Jenkins UI
+                                // Asignar a env como String
+                                env.SCAN_ID = "${scanId}"
                                 echo "✅ Scan ID capturado(2): ${env.SCAN_ID}"
                             } else {
                                 error "❌ No se pudo extraer el Scan ID del output"
