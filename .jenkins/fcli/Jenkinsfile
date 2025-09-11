@@ -54,7 +54,7 @@ pipeline {
                         bat """
                             @echo off
                             echo [INFO] Downloading fcli for Windows...
-                            curl -L https://github.com/fortify/fcli/releases/download/v6.0.0/fcli-windows-x86_64.zip -o fcli-windows.zip
+                            curl -L https://github.com/fortify/fcli/releases/download/v3.8.1/fcli-windows.zip -o fcli-windows.zip
                             if %errorlevel% neq 0 (
                                 echo [ERROR] Failed to download fcli
                                 exit 1
