@@ -35,9 +35,38 @@ pipeline {
         stage('Build') {
             steps {
                 bat "mvn clean package -DskipTests"
-                // Eliminado junit porque skipTests no genera reportes
                 archiveArtifacts artifacts: "target/*.jar", fingerprint: true
                 stash includes: "target/*.jar", name: "${env.APP_NAME}_release"
+            }
+        }
+
+        stage('Debug Credentials') {
+            steps {
+                script {
+                    echo "=== DEBUG: CREDENTIALS INFORMATION ==="
+                    echo "FOD_URL: ${params.FOD_URL}"
+                    echo "FOD_RELEASE_ID: ${params.FOD_RELEASE_ID}"
+                    
+                    // Verificar que las credenciales existen
+                    withCredentials([
+                        string(credentialsId: 'iwa-fod-client-id', variable: 'DEBUG_CLIENT_ID'),
+                        string(credentialsId: 'iwa-fod-client-secret', variable: 'DEBUG_CLIENT_SECRET')
+                    ]) {
+                        echo "FOD_CLIENT_ID length: ${DEBUG_CLIENT_ID.length()} characters"
+                        echo "FOD_CLIENT_SECRET length: ${DEBUG_CLIENT_SECRET.length()} characters"
+                        
+                        // Mostrar primeros y últimos caracteres (sin revelar completo)
+                        if (DEBUG_CLIENT_ID.length() > 4) {
+                            echo "FOD_CLIENT_ID starts with: ${DEBUG_CLIENT_ID.substring(0, 4)}..."
+                            echo "FOD_CLIENT_ID ends with: ...${DEBUG_CLIENT_ID.substring(DEBUG_CLIENT_ID.length() - 4)}"
+                        }
+                        
+                        if (DEBUG_CLIENT_SECRET.length() > 4) {
+                            echo "FOD_CLIENT_SECRET starts with: ${DEBUG_CLIENT_SECRET.substring(0, 4)}..."
+                            echo "FOD_CLIENT_SECRET ends with: ...${DEBUG_CLIENT_SECRET.substring(DEBUG_CLIENT_SECRET.length() - 4)}"
+                        }
+                    }
+                }
             }
         }
 
@@ -53,6 +82,13 @@ pipeline {
                     ]) {
                         bat """
                             @echo off
+                            echo [INFO] ===== DEBUG INFORMATION =====
+                            echo FOD_URL: ${params.FOD_URL}
+                            echo FOD_RELEASE_ID: ${params.FOD_RELEASE_ID}
+                            echo FOD_CLIENT_ID: %FOD_CLIENT_ID%
+                            echo FOD_CLIENT_SECRET: %FOD_CLIENT_SECRET%
+                            echo ===================================
+                            
                             echo [INFO] Downloading fcli for Windows...
                             curl -L https://github.com/fortify/fcli/releases/download/v3.8.1/fcli-windows.zip -o fcli-windows.zip
                             if %errorlevel% neq 0 (
@@ -67,15 +103,29 @@ pipeline {
                                 exit 1
                             )
                             
-                            echo [INFO] Logging into FoD...
-                            fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
+                            echo [INFO] Testing fcli version...
+                            fcli.exe --version
+                            
+                            echo [INFO] Attempting FoD login with debug...
+                            echo Trying: fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
+                            
+                            fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins --debug
                             if %errorlevel% neq 0 (
                                 echo [ERROR] Failed to login to FoD
+                                echo [DEBUG] Checking if credentials are correct...
+                                echo [DEBUG] Client ID: %FOD_CLIENT_ID%
+                                echo [DEBUG] Client Secret: %FOD_CLIENT_SECRET%
                                 exit 1
                             )
                             
+                            echo [INFO] Listing available releases to verify access...
+                            fcli.exe fod release list --fod-session jenkins
+                            
+                            echo [INFO] Checking release ${params.FOD_RELEASE_ID} exists...
+                            fcli.exe fod release get --release-id "${params.FOD_RELEASE_ID}" --fod-session jenkins
+                            
                             echo [INFO] Starting SAST scan...
-                            for /f "delims=" %%i in ('dir /b target\\*.jar') do (
+                            for /f "delims=" %%i in ('dir /b target\\*.jar 2^>nul') do (
                                 echo Uploading file: %%i
                                 fcli.exe fod sast-scan start --release-id "${params.FOD_RELEASE_ID}" --upload "target/%%i" --fod-session jenkins --store curScan
                             )
