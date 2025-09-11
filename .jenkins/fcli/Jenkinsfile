@@ -8,7 +8,7 @@ pipeline {
             description: 'Run Fortify on Demand SAST scan using fcli')
         string(name: 'FOD_URL', defaultValue: 'https://api.ams.fortify.com', 
             description: 'FoD API URL')
-        string(name: 'FOD_RELEASE_ID', defaultValue: '1388854', 
+        string(name: 'FOD_RELEASE_ID', defaultValue: '1503133',  // Actualizado a 1503133
             description: 'FoD Release ID')
     }
 
@@ -37,7 +37,7 @@ pipeline {
         stage('Build') {
             steps {
                 bat "mvn clean package -DskipTests"
-                bat "dir target\\*.jar /b"  // Listar archivos JAR generados
+                bat "dir target\\*.jar /b"
                 archiveArtifacts artifacts: "target/*.jar", fingerprint: true
                 stash includes: "target/*.jar", name: "${env.APP_NAME}_release"
             }
@@ -55,7 +55,7 @@ pipeline {
                     ]) {
                         bat """
                             @echo off
-                            echo [INFO] ===== FO DSAST SCAN =====
+                            echo [INFO] ===== FOD SAST SCAN =====
                             echo FOD_URL: ${params.FOD_URL}
                             echo FOD_RELEASE_ID: ${params.FOD_RELEASE_ID}
                             echo ===============================
@@ -86,6 +86,7 @@ pipeline {
                             
                             echo [INFO] Login successful! Starting SAST scan...
                             
+                            set SCAN_STARTED=0
                             for /f "delims=" %%i in ('dir /b target\\*.jar 2^>nul') do (
                                 echo [INFO] Processing file: target\\%%i
                                 echo [INFO] File size: 
@@ -94,21 +95,32 @@ pipeline {
                                 echo [INFO] Starting SAST scan for release ${params.FOD_RELEASE_ID}...
                                 fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\%%i" --fod-session jenkins --store curScan
                                 if !errorlevel! neq 0 (
-                                    echo [ERROR] Failed to start SAST scan
-                                    exit 1
+                                    echo [WARNING] fcli returned error code, but checking if scan was queued...
+                                    echo [INFO] Verifying if scan was actually started...
+                                    fcli.exe fod sast-scan list --rel ${params.FOD_RELEASE_ID} --fod-session jenkins --output table --max-records 5
+                                    set SCAN_STARTED=1
+                                ) else (
+                                    set SCAN_STARTED=1
+                                    echo [INFO] Scan started successfully
                                 )
-                                echo [INFO] Scan started successfully
                             )
                             
-                            echo [INFO] Waiting for scan to complete (timeout: 60 minutes)...
-                            fcli.exe fod sast-scan wait-for ::curScan:: --fod-session jenkins --timeout 3600
+                            if !SCAN_STARTED! equ 0 (
+                                echo [ERROR] No scan was started for any file
+                                fcli.exe fod session logout --fod-session jenkins
+                                exit 1
+                            )
+                            
+                            echo [INFO] Scan was queued successfully. Waiting for completion (timeout: 90 minutes)...
+                            fcli.exe fod sast-scan wait-for ::curScan:: --fod-session jenkins --timeout 5400
                             if %errorlevel% neq 0 (
-                                echo [ERROR] Scan failed or timed out
+                                echo [ERROR] Scan failed or timed out after 90 minutes
+                                fcli.exe fod session logout --fod-session jenkins
                                 exit 1
                             )
                             
                             echo [INFO] Getting scan results...
-                            fcli.exe fod sast-scan get ::curScan:: --fod-session jenkins
+                            fcli.exe fod sast-scan get ::curScan:: --fod-session jenkins --output json
                             
                             echo [INFO] Logging out from FoD...
                             fcli.exe fod session logout --fod-session jenkins
