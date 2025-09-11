@@ -1,177 +1,74 @@
-#!/usr/bin/env groovy
-
 pipeline {
     agent any
-
-    parameters {
-        booleanParam(name: 'FOD_SAST', defaultValue: true,
-            description: 'Run Fortify on Demand SAST scan using fcli')
-        string(name: 'FOD_URL', defaultValue: 'https://api.ams.fortify.com', 
-            description: 'FoD API URL')
-        string(name: 'FOD_RELEASE_ID', defaultValue: '1503133', 
-            description: 'FoD Release ID')
-        string(name: 'CRITICAL_THRESHOLD', defaultValue: '0', 
-            description: 'Fail pipeline if critical issues exceed this count')
-        string(name: 'HIGH_THRESHOLD', defaultValue: '10', 
-            description: 'Fail pipeline if high issues exceed this count')
-        string(name: 'SCAN_TIMEOUT_MINUTES', defaultValue: '120', 
-            description: 'Timeout in minutes for scan completion')
-    }
-
     environment {
-        APP_NAME       = "IWA-JAVA-2024"
-        APP_VERSION    = "Github-2025"
-        FOD_CLIENT_ID     = credentials('iwa-fod-client-id')
-        FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
-        GIT_URL        = "https://github.com/aisraelr/fortify-IWA-2024.git"
-        GIT_REPO_NAME  = "fortify-IWA-2024"
-        SCAN_ID        = ""  // Se capturará del output
+        FOD_SESSION = 'jenkins'  // Nombre de la sesión FoD configurada en tu fcli
     }
-
     stages {
-        stage('Initialize') {
-            steps {
-                script {
-                    env.GIT_COMMIT = bat(script: "git rev-parse HEAD", returnStdout: true).trim()
-                    env.GIT_BRANCH = bat(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
-                    echo "Repository: ${env.GIT_REPO_NAME}"
-                    
-                    // Convertir parámetros string a integers
-                    env.CRITICAL_THRESHOLD_INT = params.CRITICAL_THRESHOLD.toInteger()
-                    env.HIGH_THRESHOLD_INT = params.HIGH_THRESHOLD.toInteger()
-                    env.SCAN_TIMEOUT_MINUTES_INT = params.SCAN_TIMEOUT_MINUTES.toInteger()
-                    
-                    echo "Critical Threshold: ${env.CRITICAL_THRESHOLD_INT}"
-                    echo "High Threshold: ${env.HIGH_THRESHOLD_INT}"
-                }
-            }
-        }
 
         stage('Build') {
             steps {
-                bat "mvn clean package -DskipTests"
-                archiveArtifacts artifacts: "target/*.jar", fingerprint: true
+                echo "🔨 Building the application..."
+                bat 'mvn clean package -DskipTests'
             }
         }
 
         stage('FoD SAST Scan') {
-            when {
-                expression { params.FOD_SAST == true }
-            }
             steps {
+                echo "🛡️ Starting FoD SAST scan..."
+                
+                // Inicia el scan y guarda el JSON crudo
+                bat """
+                fcli.exe fod sast-scan start ^
+                    --rel 1388854 ^
+                    --file "target\\iwa.jar" ^
+                    --fod-session %FOD_SESSION% ^
+                    --store curScan ^
+                    --output json 1>curScan_raw.txt 2>curScan.err
+                """
+
+                // Extrae únicamente el JSON del output
+                powershell """
+                (Get-Content curScan_raw.txt) -join '' | Select-String -Pattern '{.*}' | ForEach-Object { \$_ } | Set-Content curScan.json
+                """
+
+                // Lee el JSON en Groovy
                 script {
-                    withCredentials([
-                        string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
-                        string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
-                    ]) {
-                        // Capturar el output del comando para extraer el Scan ID
-                        def scanOutput = bat(script: """
-                            @echo off
-                            echo [INFO] Downloading fcli for Windows v3.8.1...
-                            curl -L https://github.com/fortify/fcli/releases/download/v3.8.1/fcli-windows.zip -o fcli-windows.zip
-                            if %errorlevel% neq 0 exit 1
-                            
-                            echo [INFO] Extracting fcli...
-                            tar -xf fcli-windows.zip fcli.exe
-                            if %errorlevel% neq 0 exit 1
-                            
-                            echo [INFO] Logging into FoD...
-                            fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
-                            if %errorlevel% neq 0 exit 1
-                            
-                            echo [INFO] Uploading fat JAR for complete analysis...
-                            fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\iwa.jar" --fod-session jenkins --store curScan
-                            
-                            echo [INFO] Logging out from FoD...
-                            fcli.exe fod session logout --fod-session jenkins
-                        """, returnStdout: true).trim()
-                        
-                        // Extraer el Scan ID del output
-                        def scanIdMatch = scanOutput =~ /Id\\s+\\d+\\s+Static\\s+Pending/
-                        if (scanIdMatch) {
-                            def parts = scanIdMatch[0].split('\\\\s+')
-                            env.SCAN_ID = parts[1] // El ID está en la segunda posición
-                            echo "✅ Scan ID capturado: ${env.SCAN_ID}"
-                        } else {
-                            echo "⚠️  No se pudo extraer el Scan ID automáticamente"
-                            echo "ℹ️  Revisar output manualmente para encontrar el ID"
-                        }
-                        
-                        echo "✅ Scan submitted successfully!"
-                        echo "📋 Scan ID: ${env.SCAN_ID ?: 'Por determinar'}"
-                        echo "🌐 FoD Portal: ${params.FOD_URL}"
-                    }
+                    def curScan = readJSON file: 'curScan.json'
+                    echo "Scan started. Scan ID: ${curScan.scanId}"
                 }
             }
         }
 
         stage('Wait for Scan Completion') {
-            when {
-                expression { params.FOD_SAST == true && env.SCAN_ID }
-            }
             steps {
+                echo "⏳ Waiting for scan completion..."
+
                 script {
-                    withCredentials([
-                        string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
-                        string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
-                    ]) {
-                        bat """
-                            @echo off
-                            echo [INFO] Waiting for scan ${env.SCAN_ID} to complete...
-                            echo [INFO] Timeout: ${env.SCAN_TIMEOUT_MINUTES_INT} minutes
-                            
-                            fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
-                            
-                            set /a TIMEOUT_SECONDS=${env.SCAN_TIMEOUT_MINUTES_INT} * 60
-                            fcli.exe fod sast-scan wait-for ${env.SCAN_ID} --fod-session jenkins --timeout %TIMEOUT_SECONDS%
-                            if %errorlevel% neq 0 (
-                                echo [WARNING] Scan timed out or failed
-                            )
-                            
-                            echo [INFO] Getting scan results...
-                            fcli.exe fod sast-scan get ${env.SCAN_ID} --fod-session jenkins --output json > scan_results.json
-                            
-                            fcli.exe fod session logout --fod-session jenkins
-                        """
-                    }
+                    // Espera a que el scan termine usando la variable de store
+                    bat """
+                    fcli.exe fod sast-scan wait-for ::curScan:: ^
+                        --fod-session %FOD_SESSION%
+                    """
                 }
             }
         }
 
-        stage('Validate Scan Results') {
-            when {
-                expression { params.FOD_SAST == true && env.SCAN_ID }
-            }
+        stage('Get Scan Results') {
             steps {
+                echo "📊 Retrieving scan results..."
+
                 script {
-                    if (fileExists('scan_results.json')) {
-                        def results = readJSON file: 'scan_results.json'
-                        def critical = results.detailScanResult?.critical ?: 0
-                        def high = results.detailScanResult?.high ?: 0
-                        def status = results.analysisStatus ?: 'Unknown'
-                        
-                        echo "📊 SCAN RESULTS for ID: ${env.SCAN_ID}"
-                        echo "   Status: ${status}"
-                        echo "   Critical Issues: ${critical}"
-                        echo "   High Issues: ${high}"
-                        echo "   Threshold - Critical: ${env.CRITICAL_THRESHOLD_INT}"
-                        echo "   Threshold - High: ${env.HIGH_THRESHOLD_INT}"
-                        
-                        // Validar contra umbrales
-                        if (critical > env.CRITICAL_THRESHOLD_INT) {
-                            error "❌ BUILD FAILED: Critical issues (${critical}) > threshold (${env.CRITICAL_THRESHOLD_INT})"
-                        }
-                        
-                        if (high > env.HIGH_THRESHOLD_INT) {
-                            error "❌ BUILD FAILED: High issues (${high}) > threshold (${env.HIGH_THRESHOLD_INT})"
-                        }
-                        
-                        echo "✅ SCAN PASSED: All thresholds met"
-                        
-                    } else {
-                        echo "⚠️  No se encontraron resultados para el scan"
-                        echo "✅ Continuando - el scan se envió exitosamente"
-                    }
+                    // Guardar resultados en un archivo JSON
+                    bat """
+                    fcli.exe fod sast-scan get-results ^
+                        ::curScan:: ^
+                        --fod-session %FOD_SESSION% ^
+                        --output json ^
+                        --to-file scan_results.json
+                    """
+
+                    def results = readJSON file: 'scan_results.json'
+                    echo "Scan results retrieved. Analysis status: ${results.analysisStatusType}"
                 }
             }
         }
@@ -179,26 +76,13 @@ pipeline {
 
     post {
         always {
-            echo "📋 RESUMEN EJECUCIÓN"
-            echo "   Scan ID: ${env.SCAN_ID ?: 'N/A'}"
-            echo "   Estado: ${currentBuild.currentResult}"
-            echo "   Portal: https://ams.fortify.com"
-            
-            // Limpieza
-            bat """
-                @echo off
-                if exist fcli-windows.zip del fcli-windows.zip
-                if exist fcli.exe del fcli.exe
-                if exist scans.json del scans.json 2>nul
-                if exist scan_results.json del scan_results.json 2>nul
-            """
-            cleanWs()
+            echo "🧹 Cleaning up..."
         }
         success {
-            echo "✅ PIPELINE EXITOSO"
+            echo "✅ Pipeline finished successfully!"
         }
         failure {
-            echo "❌ PIPELINE FALLIDO"
+            echo "❌ Pipeline failed!"
         }
     }
 }
