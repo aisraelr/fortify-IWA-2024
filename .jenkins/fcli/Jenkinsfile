@@ -51,27 +51,27 @@ pipeline {
         }
 
         stage('FoD SAST Scan') {
-        steps {
-            echo "🛠 Starting FoD SAST scan..."
-            bat """
-            fcli.exe fod sast-scan start ^
-                --rel ${FOD_RELEASE_ID} ^
-                --file "target\\iwa.jar" ^
-                --fod-session jenkins ^
-                --store curScan ^
-                --output json > curScan_raw.txt 2>curScan.err
-            """
-            // Extraer solo el JSON al final del archivo
-            powershell """
-            Get-Content curScan_raw.txt | Select-String -Pattern '^{.*' | Set-Content curScan.json
-            """
-            script {
-            def curScan = readJSON file: 'curScan.json'
-            echo "Scan started: ${curScan.scanId}"
+            steps {
+                echo "🚀 Starting FoD SAST scan..."
+                bat """
+                fcli.exe fod sast-scan start ^
+                    --rel ${FOD_RELEASE_ID} ^
+                    --file "target\\iwa.jar" ^
+                    --fod-session jenkins ^
+                    --store curScan ^
+                    --output json > curScan_raw.txt 2>curScan.err
+                """
+                powershell """
+                \$content = Get-Content curScan_raw.txt -Raw
+                \$jsonMatch = [regex]::Matches(\$content, '{.*}', [System.Text.RegularExpressions.RegexOptions]::Singleline)[-1].Value
+                \$jsonMatch | Set-Content curScan.json
+                """
+                script {
+                def curScan = readJSON file: 'curScan.json'
+                echo "Scan started: ${curScan.scanId}"
+                }
             }
         }
-        }
-
 
         stage('Wait for Scan Completion') {
             steps {
