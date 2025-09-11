@@ -90,8 +90,8 @@ pipeline {
                             echo "✅ Scan ID capturado(1): ${scanId}"
 
                             if (scanId) {
-                                currentBuild.displayName = "#${BUILD_NUMBER} - Scan ${scanId}"  // útil para verlo en Jenkins UI
-                                env.SCAN_ID = scanId  // 🔑 asignación correcta
+                                currentBuild.displayName = "#${BUILD_NUMBER} - Scan ${scanId}"
+                                env.SCAN_ID = scanId.toString().trim()   // 🔑 forzar a String
                                 echo "✅ Scan ID capturado(2): ${env.SCAN_ID}"
                             } else {
                                 error "❌ No se pudo extraer el Scan ID del output"
