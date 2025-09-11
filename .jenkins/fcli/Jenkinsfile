@@ -39,19 +39,20 @@ pipeline {
             }
         }
 
-        stage('FoD SAST with fcli') {
+        stage('FoD SAST with fcli (windows)') {
             when {
                 expression { params.FOD_SAST == true }
             }
             steps {
-                sh """
-                    curl -L https://github.com/fortify/fcli/releases/download/latest/fcli-linux.tgz | tar -xz fcli
-                    ./fcli fod session login --client-id ${env.FOD_CLIENT_ID} --client-secret ${env.FOD_CLIENT_SECRET} --url ${env.FOD_URL} --fod-session jenkins
-                    ./fcli fod sast-scan start --release-id ${env.FOD_RELEASE_ID} --upload target/*.jar --fod-session jenkins --store curScan
-                    ./fcli fod sast-scan wait-for ::curScan:: --fod-session jenkins
-                    ./fcli fod session logout --fod-session jenkins
+                bat """
+                    curl -L https://github.com/fortify/fcli/releases/download/latest/fcli-windows.zip -o fcli-windows.zip
+                    tar -xf fcli-windows.zip fcli.exe
+                    fcli.exe fod session login --client-id %FOD_CLIENT_ID% --client-secret %FOD_CLIENT_SECRET% --url %FOD_URL% --fod-session jenkins
+                    fcli.exe fod sast-scan start --release-id %FOD_RELEASE_ID% --upload target/*.jar --fod-session jenkins --store curScan
+                    fcli.exe fod sast-scan wait-for ::curScan:: --fod-session jenkins
+                    fcli.exe fod session logout --fod-session jenkins
                 """
             }
-        }
+        }        
     }
 }
