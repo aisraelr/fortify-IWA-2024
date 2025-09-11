@@ -2,9 +2,9 @@ pipeline {
     agent any
 
     environment {
-        FOD_SESSION = 'jenkins'
-        RELEASE_ID  = '1388854'
-        APP_FILE    = 'target\\iwa.jar'
+        FOD_SESSION = 'jenkins'        // Nombre de la sesión FoD configurada
+        RELEASE_ID  = '1388854'        // ID de tu release en FoD
+        APP_FILE    = 'target\\iwa.jar' // Ruta del archivo a escanear
     }
 
     stages {
@@ -12,29 +12,24 @@ pipeline {
         stage('FoD SAST Scan') {
             steps {
                 echo "🚀 Starting FoD SAST scan..."
-                
-                // Ejecutar el SAST scan
+
+                // Ejecutar el scan y guardar salida cruda
                 bat """
-                fcli.exe fod sast-scan start ^
-                    --rel ${RELEASE_ID} ^
-                    --file "${APP_FILE}" ^
-                    --fod-session ${FOD_SESSION} ^
-                    --store curScan ^
-                    --output json 1>curScan_raw.txt 2>curScan.err
+                fcli.exe fod sast-scan start --rel ${RELEASE_ID} --file "${APP_FILE}" --fod-session ${FOD_SESSION} --store curScan --output json 1>curScan_raw.txt 2>curScan.err
                 """
 
-                // Extraer JSON válido usando PowerShell
-                powershell '''
-                $jsonLine = Select-String -Path curScan_raw.txt -Pattern '{.*}' | ForEach-Object { $_ -replace '^.*?({.*}).*$', '$1' }
-                $jsonLine | Set-Content -Encoding UTF8 curScan.json
-                '''
+                // Extraer solo el JSON válido usando PowerShell
+                powershell """
+                \$jsonLine = Select-String -Path curScan_raw.txt -Pattern '^{.*}\$' | ForEach-Object { \$_.
+                Matches[0].Value }
+                \$jsonLine | Set-Content -Encoding UTF8 curScan.json
+                """
 
-                // Leer JSON para Groovy
+                // Leer JSON limpio y guardar releaseAndScanId en variable de entorno
                 script {
                     def scanInfo = readJSON file: 'curScan.json'
-                    echo "Scan started: ID=${scanInfo.scanId}, Status=${scanInfo.analysisStatusType}"
-                    // Guardamos el releaseAndScanId para esperar el scan
                     env.SCAN_ID = scanInfo.releaseAndScanId
+                    echo "Scan ID obtained: ${env.SCAN_ID}"
                 }
             }
         }
@@ -42,27 +37,27 @@ pipeline {
         stage('Wait for Scan Completion') {
             steps {
                 echo "⏳ Waiting for scan completion..."
+
+                // Esperar a que el scan termine
                 bat """
-                fcli.exe fod sast-scan wait-for ::SCAN_ID:: ^
-                    --fod-session ${FOD_SESSION} ^
-                    --interval 30s ^
-                    --timeout 60m
+                fcli.exe fod sast-scan wait-for ::SCAN_ID:: --fod-session ${FOD_SESSION} --timeout 1h
                 """
             }
         }
 
         stage('Get Scan Results') {
             steps {
-                echo "📊 Retrieving scan results..."
+                echo "📊 Getting scan results..."
+
+                // Obtener resultados finales del scan
                 bat """
-                fcli.exe fod sast-scan results ::SCAN_ID:: ^
-                    --fod-session ${FOD_SESSION} ^
-                    --output json ^
-                    --to-file scan_results.json
+                fcli.exe fod sast-scan get-results ::SCAN_ID:: --fod-session ${FOD_SESSION} --output json --store scanResults --to-file scanResults.json
                 """
+                // Leer y mostrar el resultado
                 script {
-                    def results = readJSON file: 'scan_results.json'
-                    echo "Scan completed. Analysis status: ${results.analysisStatusType}"
+                    def results = readJSON file: 'scanResults.json'
+                    echo "Analysis Status: ${results.analysisStatusType}"
+                    echo "Total Issues: ${results.totalIssues ?: 'N/A'}"
                 }
             }
         }
@@ -71,9 +66,10 @@ pipeline {
     post {
         always {
             echo "🧹 Cleaning up..."
+            bat "del curScan_raw.txt curScan.json curScan.err scanResults.json"
         }
         success {
-            echo "✅ Pipeline finished successfully!"
+            echo "✅ Pipeline completed successfully!"
         }
         failure {
             echo "❌ Pipeline failed!"
