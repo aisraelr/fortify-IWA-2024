@@ -59,7 +59,8 @@ pipeline {
                         --file "target\\iwa.jar" ^
                         --fod-session jenkins ^
                         --store curScan ^
-                        --output json > curScan.json 2>curScan.err
+                        --output json ^
+                        --quiet > curScan.json 2>curScan.err
                 """
                 script {
                     def jsonContent = readFile('curScan.json').trim()
