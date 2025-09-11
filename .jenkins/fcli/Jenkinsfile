@@ -10,17 +10,17 @@ pipeline {
             description: 'FoD API URL')
         string(name: 'FOD_RELEASE_ID', defaultValue: '1503133', 
             description: 'FoD Release ID')
-        int(name: 'CRITICAL_THRESHOLD', defaultValue: 0, 
+        integerParam(name: 'CRITICAL_THRESHOLD', defaultValue: 0, 
             description: 'Fail pipeline if critical issues exceed this count')
-        int(name: 'HIGH_THRESHOLD', defaultValue: 10, 
+        integerParam(name: 'HIGH_THRESHOLD', defaultValue: 10, 
             description: 'Fail pipeline if high issues exceed this count')
-        int(name: 'SCAN_TIMEOUT_MINUTES', defaultValue: 120, 
+        integerParam(name: 'SCAN_TIMEOUT_MINUTES', defaultValue: 120, 
             description: 'Timeout in minutes for scan completion')
     }
 
     environment {
         APP_NAME       = "IWA-JAVA-2024"
-        APP_VERSION    = "Github-2025"
+        APP_VERSION    = "fcli"
         FOD_CLIENT_ID     = credentials('iwa-fod-client-id')
         FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
         GIT_URL        = "https://github.com/aisraelr/fortify-IWA-2024.git"
