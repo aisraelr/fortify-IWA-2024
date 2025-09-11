@@ -32,10 +32,10 @@ pipeline {
     stages {
         stage('Build') {
             steps {
-                sh "mvn clean package -DskipTests"
+                bat "mvn clean package -DskipTests"
                 junit '**/target/surefire-reports/TEST-*.xml'
                 archiveArtifacts artifacts: "target/*.jar", fingerprint: true
-                stash includes: "target/*.jar", name: "${env.APP_NAME}_release"
+                stash includes: "target/*.jar", name: "%APP_NAME%_release"
             }
         }
 
