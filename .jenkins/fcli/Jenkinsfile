@@ -105,25 +105,11 @@ pipeline {
         stage('Wait for Scan Completion') {
             steps {
                 script {
-                    if (params.FOD_SAST && GLOBAL_SCAN_ID) {
-                        withCredentials([
-                            string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
-                            string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
-                        ]) {
-                            bat """
-                                @echo off
-                                "${FCLI_HOME}\\fcli.exe" fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
-                                
-                                set /a TIMEOUT_SECONDS=${env.SCAN_TIMEOUT_MINUTES_INT} * 60
-                                "${FCLI_HOME}\\fcli.exe" fod sast-scan wait-for ${GLOBAL_SCAN_ID} --fod-session jenkins --timeout %TIMEOUT_SECONDS%
-                                
-                                "${FCLI_HOME}\\fcli.exe" fod sast-scan get ${GLOBAL_SCAN_ID} --fod-session jenkins --output json > scan_results.json
-                                
-                                "${FCLI_HOME}\\fcli.exe" fod session logout --fod-session jenkins
-                            """
-                        }
-                    } else {
-                        error "❌ Scan ID no definido, no se puede esperar la finalización"
+                    withCredentials([usernamePassword(credentialsId: 'fod-credentials', usernameVariable: 'FOD_CLIENT_ID', passwordVariable: 'FOD_CLIENT_SECRET')]) {
+                        bat """
+                        echo Waiting for scan %GLOBAL_SCAN_ID% to complete...
+                        fcli fod scan wait-for %GLOBAL_SCAN_ID% --timeout 30m --session jenkins --store last-scan.json
+                        """
                     }
                 }
             }
@@ -132,35 +118,35 @@ pipeline {
         stage('Validate Scan Results') {
             steps {
                 script {
-                    if (params.FOD_SAST && GLOBAL_SCAN_ID && fileExists('scan_results.json')) {
-                        def results = readJSON file: 'scan_results.json'
-                        def critical = results.detailScanResult?.critical ?: 0
-                        def high = results.detailScanResult?.high ?: 0
-                        def status = results.analysisStatus ?: 'Unknown'
+                    if (fileExists('last-scan.json')) {
+                        def scanResults = readJSON file: 'last-scan.json'
                         
+                        echo "📝 RAW SCAN RESULTS JSON:"
+                        echo groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(scanResults))
+
+                        def status = scanResults?.status ?: "Unknown"
+                        def criticalCount = scanResults?.issues?.critical?.toInteger() ?: 0
+                        def highCount     = scanResults?.issues?.high?.toInteger() ?: 0
+
                         echo "📊 SCAN RESULTS for ID: ${GLOBAL_SCAN_ID}"
                         echo "   Status: ${status}"
-                        echo "   Critical Issues: ${critical}"
-                        echo "   High Issues: ${high}"
-                        echo "   Threshold - Critical: ${env.CRITICAL_THRESHOLD_INT}"
-                        echo "   Threshold - High: ${env.HIGH_THRESHOLD_INT}"
-                        
-                        if (critical > env.CRITICAL_THRESHOLD_INT) {
-                            error "❌ BUILD FAILED: Critical issues (${critical}) > threshold (${env.CRITICAL_THRESHOLD_INT})"
+                        echo "   Critical Issues: ${criticalCount}"
+                        echo "   High Issues: ${highCount}"
+
+                        // Validación contra thresholds
+                        def thresholdCritical = 0
+                        def thresholdHigh = 10
+
+                        if (criticalCount > thresholdCritical || highCount > thresholdHigh) {
+                            error "❌ Scan failed: too many issues"
                         }
-                        
-                        if (high > env.HIGH_THRESHOLD_INT) {
-                            error "❌ BUILD FAILED: High issues (${high}) > threshold (${env.HIGH_THRESHOLD_INT})"
-                        }
-                        
-                        echo "✅ SCAN PASSED: All thresholds met"
                     } else {
-                        error "❌ No se pudieron obtener resultados del scan"
+                        error "❌ Scan results file not found"
                     }
                 }
             }
         }
-    }
+
 
     post {
         always {
