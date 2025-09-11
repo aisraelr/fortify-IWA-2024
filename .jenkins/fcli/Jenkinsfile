@@ -4,7 +4,7 @@ pipeline {
     agent any
 
     parameters {
-        string(name: 'FOD_RELEASE_ID', defaultValue: '', description: 'Fortify on Demand Release ID')
+        string(name: 'FOD_RELEASE_ID', defaultValue: '1388854', description: 'Fortify on Demand Release ID')
         string(name: 'BRANCH_NAME', defaultValue: 'main', description: 'Branch to build')
         string(name: 'MVN_GOALS', defaultValue: 'clean package -DskipTests', description: 'Maven build goals')
     }
@@ -12,7 +12,7 @@ pipeline {
     environment {
         FCLI_HOME = 'C:\\fcli'
         PATH = "${env.PATH};${env.FCLI_HOME}"
-        FCLI_VERSION = 'v3.8.1'   // 🔧 cámbialo fácilmente cuando salga nueva versión
+        FCLI_VERSION = 'v3.8.1'   // Cambia aquí cuando salga nueva versión
     }
 
     stages {
@@ -64,7 +64,10 @@ pipeline {
                 script {
                     def jsonContent = readFile('curScan.json').trim()
                     if (!jsonContent.startsWith("{")) {
-                        echo "❌ fcli did not return JSON. Error output:"
+                        echo "❌ fcli did not return JSON."
+                        echo "---- curScan.json ----"
+                        echo jsonContent
+                        echo "---- curScan.err ----"
                         echo readFile('curScan.err')
                         error("FoD SAST scan start failed. See above error.")
                     }
@@ -74,7 +77,6 @@ pipeline {
                 }
             }
         }
-
 
         stage('Wait for Scan Completion') {
             steps {
@@ -89,10 +91,19 @@ pipeline {
             steps {
                 echo "📥 Fetching scan results..."
                 bat """
-                    fcli.exe fod sast-scan get ${env.SCAN_ID} --fod-session jenkins --output json > scanResult.json
+                    fcli.exe fod sast-scan get ${env.SCAN_ID} --fod-session jenkins --output json > scanResult.json 2>scanResult.err
                 """
                 script {
-                    def scanResult = readJSON file: 'scanResult.json'
+                    def resultContent = readFile('scanResult.json').trim()
+                    if (!resultContent.startsWith("{")) {
+                        echo "❌ fcli did not return JSON for results."
+                        echo "---- scanResult.json ----"
+                        echo resultContent
+                        echo "---- scanResult.err ----"
+                        echo readFile('scanResult.err')
+                        error("FoD SAST scan results fetch failed. See above error.")
+                    }
+                    def scanResult = readJSON text: resultContent
                     echo "📊 Scan Result: ${scanResult}"
                 }
             }
