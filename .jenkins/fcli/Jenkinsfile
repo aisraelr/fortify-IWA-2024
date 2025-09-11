@@ -2,80 +2,115 @@ pipeline {
     agent any
 
     environment {
-        // Ajusta según tu release de FoD
-        FOD_RELEASE_ID = "1388854"
-        FOD_SESSION    = "jenkins"
-        SCAN_STORE     = "curScan"
+        // Configuración de credenciales y variables
+        FOD_TENANT       = credentials('fod-tenant')
+        FOD_CLIENT_ID    = credentials('fod-client-id')
+        FOD_CLIENT_SECRET= credentials('fod-client-secret')
+        RELEASE_ID       = "1388854"
+        FCLI_EXE         = "C:\\fcli\\fcli.exe"
     }
 
     stages {
+
         stage('Checkout SCM') {
             steps {
                 echo "📂 Checking out source code..."
                 checkout([
                     $class: 'GitSCM',
                     branches: [[name: "*/main"]],
-                    doGenerateSubmoduleConfigurations: false,
-                    extensions: [],
                     userRemoteConfigs: [[
-                        credentialsId: 'GitHub',   // <- Usa tu credencial correcta
-                        url: 'https://github.com/aisraelr/fortify-IWA-2024.git'
+                        url: 'https://github.com/aisraelr/fortify-IWA-2024.git',
+                        credentialsId: 'GitHub'
                     ]]
                 ])
+            }
+        }
+
+        stage('Setup fcli') {
+            steps {
+                echo "⚙️ Verificando fcli..."
+                bat '''
+                if exist %FCLI_EXE% (
+                    echo fcli ya existe en %FCLI_EXE%
+                ) else (
+                    echo Descargando fcli...
+                    if not exist C:\\fcli mkdir C:\\fcli
+                    curl -L -o fcli.zip https://github.com/fortify/fcli/releases/download/v3.8.1/fcli-windows.zip
+                    powershell -command "Expand-Archive fcli.zip -DestinationPath C:\\fcli -Force"
+                    move C:\\fcli\\fcli-windows\\fcli.exe %FCLI_EXE%
+                )
+                %FCLI_EXE% --version
+                '''
+            }
+        }
+
+        stage('FoD Login') {
+            steps {
+                echo "🔑 Iniciando sesión en Fortify on Demand..."
+                bat '''
+                %FCLI_EXE% fod session login ^
+                  --store jenkins ^
+                  --url https://ams.fortify.com ^
+                  --tenant %FOD_TENANT% ^
+                  --client-id %FOD_CLIENT_ID% ^
+                  --client-secret %FOD_CLIENT_SECRET%
+                '''
             }
         }
 
         stage('FoD SAST Scan') {
             steps {
                 echo "🚀 Starting FoD SAST scan..."
-                bat """
-                    fcli.exe fod sast-scan start ^
-                        --rel %FOD_RELEASE_ID% ^
-                        --file "target\\iwa.jar" ^
-                        --fod-session %FOD_SESSION% ^
-                        --store %SCAN_STORE% ^
-                        --output json > curScan.json 2> curScan.err
-                """
+                bat '''
+                %FCLI_EXE% fod sast-scan start ^
+                  --rel %RELEASE_ID% ^
+                  --file "target\\iwa.jar" ^
+                  --fod-session jenkins ^
+                  --store curScan ^
+                  --output json > curScan.json 2>curScan.err
+                '''
             }
         }
 
         stage('Wait for Scan Completion') {
             steps {
-                echo "⏳ Waiting for FoD scan to complete..."
-                bat """
-                    fcli.exe fod scan wait-for ^
-                        --scan-session %SCAN_STORE% ^
-                        --fod-session %FOD_SESSION% ^
-                        --store waitScan ^
-                        --output json > waitScan.json 2> waitScan.err
-                """
+                echo "⏳ Waiting for scan completion..."
+                bat '''
+                %FCLI_EXE% fod scan wait-for ^
+                  --scan-session curScan ^
+                  --timeout 1800 ^
+                  --interval 60 ^
+                  --fod-session jenkins ^
+                  --output json > waitScan.json 2>waitScan.err
+                '''
             }
         }
 
         stage('Get Scan Results') {
             steps {
-                echo "📊 Getting FoD scan results..."
-                bat """
-                    fcli.exe fod scan get-results ^
-                        --scan-session %SCAN_STORE% ^
-                        --fod-session %FOD_SESSION% ^
-                        --output json > scanResults.json 2> scanResults.err
-                """
-                archiveArtifacts artifacts: 'scanResults.json', fingerprint: true
+                echo "📊 Retrieving scan results..."
+                bat '''
+                %FCLI_EXE% fod scan get-results ^
+                  --scan-session curScan ^
+                  --fod-session jenkins ^
+                  --output json > scanResults.json 2>scanResults.err
+                '''
             }
         }
     }
 
     post {
+        always {
+            echo "🧹 Cleaning up..."
+            bat '''
+            del /Q curScan.json curScan.err waitScan.json waitScan.err scanResults.json scanResults.err 2>nul || exit 0
+            '''
+        }
         success {
             echo "✅ Pipeline completed successfully!"
         }
         failure {
             echo "❌ Pipeline failed!"
-        }
-        always {
-            echo "🧹 Cleaning up..."
-            bat 'del /Q curScan.json curScan.err waitScan.json waitScan.err scanResults.err 2>nul || exit 0'
         }
     }
 }
