@@ -197,39 +197,27 @@ pipeline {
                     } else if (!fileExists('last-scan.json')) {
                         error "❌ No se encontró last-scan.json con resultados."
                     } else {
-                        def scanResults = readJSON file: 'last-scan.json'
-                        echo "📝 RAW SCAN RESULTS JSON:"
-                        echo groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(scanResults))
+                        // Leer todo el archivo como texto
+                        def rawText = readFile('last-scan.json')
 
-                        // Extraer status y contadores desde posibles rutas (muy defensivo)
-                        def status = scanResults?.analysisStatus ?: scanResults?.status ?: 'Unknown'
-
-                        int criticalCount = 0
-                        int highCount = 0
-
-                        try {
-                            if (scanResults?.detailScanResult) {
-                                criticalCount = ((scanResults.detailScanResult.critical ?: 0).toString().replaceAll('[^0-9]', '') ?: '0').toInteger()
-                                highCount     = ((scanResults.detailScanResult.high ?: 0).toString().replaceAll('[^0-9]', '') ?: '0').toInteger()
-                            } else if (scanResults?.issues) {
-                                criticalCount = ((scanResults.issues.critical ?: 0).toString() ?: '0').toInteger()
-                                highCount     = ((scanResults.issues.high ?: 0).toString() ?: '0').toInteger()
-                            } else if (scanResults?.issueCounts) {
-                                criticalCount = ((scanResults.issueCounts.critical ?: 0).toString() ?: '0').toInteger()
-                                highCount     = ((scanResults.issueCounts.high ?: 0).toString() ?: '0').toInteger()
-                            } else {
-                                // Fallback: buscar en el JSON por números etiquetados "critical"/"high"
-                                def jsonText = groovy.json.JsonOutput.toJson(scanResults)
-                                def mC = jsonText =~ /"critical"\\s*:\\s*(\\d+)/
-                                if (mC.find()) { criticalCount = mC.group(1).toInteger() }
-                                def mH = jsonText =~ /"high"\\s*:\\s*(\\d+)/
-                                if (mH.find()) { highCount = mH.group(1).toInteger() }
-                            }
-                        } catch (Exception e) {
-                            echo "⚠ Error parseando contadores: ${e}. Se usarán 0 por defecto."
-                            criticalCount = 0
-                            highCount = 0
+                        // Buscar la primera línea que empiece con '[' → inicio del JSON real
+                        def jsonStart = rawText.indexOf('[')
+                        if (jsonStart < 0) {
+                            error "❌ No se encontró bloque JSON en last-scan.json"
                         }
+
+                        def jsonText = rawText.substring(jsonStart).trim()
+                        echo "📝 Bloque JSON detectado:"
+                        echo jsonText
+
+                        // Parsear el JSON limpio
+                        def scanResults = readJSON text: jsonText
+
+                        // Como es un array con un objeto adentro
+                        def result = scanResults[0]
+                        def status = result.analysisStatusType ?: 'Unknown'
+                        def criticalCount = result.issueCountCritical ?: 0
+                        def highCount = result.issueCountHigh ?: 0
 
                         echo "📊 SCAN RESULTS for ID: ${GLOBAL_SCAN_ID}"
                         echo "   Status: ${status}"
@@ -238,7 +226,6 @@ pipeline {
                         echo "   Threshold - Critical: ${params.CRITICAL_THRESHOLD}"
                         echo "   Threshold - High: ${params.HIGH_THRESHOLD}"
 
-                        // Validación final comparando enteros
                         if (criticalCount > params.CRITICAL_THRESHOLD.toInteger()) {
                             error "❌ BUILD FAILED: Critical issues (${criticalCount}) > threshold (${params.CRITICAL_THRESHOLD})"
                         }
@@ -251,6 +238,7 @@ pipeline {
                 }
             }
         }
+
     }
 
     post {
