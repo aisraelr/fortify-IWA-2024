@@ -16,7 +16,7 @@ pipeline {
 
         FOD_CLIENT_ID     = credentials('iwa-fod-client-id')
         FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
-        FOD_RELEASE_ID    = "${params.FOD_RELEASE_ID ?: '0'}"
+        FOD_RELEASE_ID    = "${params.FOD_RELEASE_ID ?: '1388854'}"
     }
 
     stages {
