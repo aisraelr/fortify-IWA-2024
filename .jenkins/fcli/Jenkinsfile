@@ -1,41 +1,40 @@
 pipeline {
     agent any
+
     environment {
         FOD_SESSION = 'jenkins'
+        RELEASE_ID  = '1388854'
+        APP_FILE    = 'target\\iwa.jar'
     }
-    stages {
 
-        stage('Build') {
-            steps {
-                echo "🔨 Building the application..."
-                bat 'mvn clean package -DskipTests'
-            }
-        }
+    stages {
 
         stage('FoD SAST Scan') {
             steps {
-                echo "🛡️ Starting FoD SAST scan..."
+                echo "🚀 Starting FoD SAST scan..."
                 
-                // Ejecuta el scan y guarda toda la salida
+                // Ejecutar el SAST scan
                 bat """
                 fcli.exe fod sast-scan start ^
-                    --rel 1388854 ^
-                    --file "target\\iwa.jar" ^
-                    --fod-session %FOD_SESSION% ^
+                    --rel ${RELEASE_ID} ^
+                    --file "${APP_FILE}" ^
+                    --fod-session ${FOD_SESSION} ^
                     --store curScan ^
                     --output json 1>curScan_raw.txt 2>curScan.err
                 """
 
-                // Extrae sólo el JSON usando PowerShell
-                powershell """
-                \$jsonLine = Select-String -Path curScan_raw.txt -Pattern '{.*}' | ForEach-Object { \$_ -replace '^.*?({.*}).*$', '\$1' }
-                \$jsonLine | Set-Content -Encoding UTF8 curScan.json
-                """
+                // Extraer JSON válido usando PowerShell
+                powershell '''
+                $jsonLine = Select-String -Path curScan_raw.txt -Pattern '{.*}' | ForEach-Object { $_ -replace '^.*?({.*}).*$', '$1' }
+                $jsonLine | Set-Content -Encoding UTF8 curScan.json
+                '''
 
-                // Lee el JSON limpio en Groovy
+                // Leer JSON para Groovy
                 script {
-                    def curScan = readJSON file: 'curScan.json'
-                    echo "Scan started successfully! Scan ID: ${curScan.scanId}"
+                    def scanInfo = readJSON file: 'curScan.json'
+                    echo "Scan started: ID=${scanInfo.scanId}, Status=${scanInfo.analysisStatusType}"
+                    // Guardamos el releaseAndScanId para esperar el scan
+                    env.SCAN_ID = scanInfo.releaseAndScanId
                 }
             }
         }
@@ -43,33 +42,27 @@ pipeline {
         stage('Wait for Scan Completion') {
             steps {
                 echo "⏳ Waiting for scan completion..."
-
-                script {
-                    // Usa la variable de store directamente
-                    bat """
-                    fcli.exe fod sast-scan wait-for ::curScan:: ^
-                        --fod-session %FOD_SESSION% ^
-                        --timeout 1h
-                    """
-                }
+                bat """
+                fcli.exe fod sast-scan wait-for ::SCAN_ID:: ^
+                    --fod-session ${FOD_SESSION} ^
+                    --interval 30s ^
+                    --timeout 60m
+                """
             }
         }
 
         stage('Get Scan Results') {
             steps {
                 echo "📊 Retrieving scan results..."
-
+                bat """
+                fcli.exe fod sast-scan results ::SCAN_ID:: ^
+                    --fod-session ${FOD_SESSION} ^
+                    --output json ^
+                    --to-file scan_results.json
+                """
                 script {
-                    bat """
-                    fcli.exe fod sast-scan get-results ^
-                        ::curScan:: ^
-                        --fod-session %FOD_SESSION% ^
-                        --output json ^
-                        --to-file scan_results.json
-                    """
-
                     def results = readJSON file: 'scan_results.json'
-                    echo "Scan finished. Analysis status: ${results.analysisStatusType}"
+                    echo "Scan completed. Analysis status: ${results.analysisStatusType}"
                 }
             }
         }
