@@ -29,7 +29,7 @@ pipeline {
                 bat "mvn clean package -DskipTests"
 
                 // Publica resultados de pruebas si existen
-                junit '**/target/surefire-reports/TEST-*.xml'
+                junit '**/target/surefire-reports/TEST-*.xml', allowEmptyResults: true
 
                 // Archiva artefactos
                 archiveArtifacts artifacts: "target/*.jar", fingerprint: true
