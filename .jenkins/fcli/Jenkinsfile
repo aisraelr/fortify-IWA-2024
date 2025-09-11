@@ -105,6 +105,14 @@ pipeline {
             }
         }
 
+        stage('Debug Scan ID') {
+            steps {
+                script {
+                    echo "🔍 Debug: env.SCAN_ID = ${env.SCAN_ID ?: 'null'}"
+                }
+            }
+        }
+
         stage('Wait for Scan Completion') {
             steps {
                 script {
