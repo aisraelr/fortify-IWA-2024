@@ -5,28 +5,36 @@ pipeline {
 
     parameters {
         booleanParam(name: 'FOD_SAST', defaultValue: true,
-            description: 'Run Fortify on Demand SAST scan using Jenkins plugin')
+            description: 'Run Fortify on Demand SAST scan using Jenkins plugin (Windows)')
     }
 
     environment {
-        APP_NAME       = "IWA-JAVA-2024"
+        APP_NAME       = "fortify-IWA-2024"
         APP_VERSION    = "Github-2025"
         GIT_URL        = scm.getUserRemoteConfigs()[0].getUrl()
         GIT_REPO_NAME  = GIT_URL.split('/').last().replace('.git', '')
 
-        // Estas credenciales deben estar configuradas en Jenkins
+        // Credenciales en Jenkins (Secret Text / UsernamePassword según configuración)
         FOD_CLIENT_ID     = credentials('iwa-fod-client-id')
         FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
 
+        // Parámetros configurables
         FOD_RELEASE_ID = "${params.FOD_RELEASE_ID ?: '0'}"
     }
 
     stages {
         stage('Build') {
             steps {
-                sh "mvn clean package -DskipTests"
+                // Ejecuta Maven en Windows (usa bat en lugar de sh)
+                bat "mvn clean package -DskipTests"
+
+                // Publica resultados de pruebas si existen
                 junit '**/target/surefire-reports/TEST-*.xml'
+
+                // Archiva artefactos
                 archiveArtifacts artifacts: "target/*.jar", fingerprint: true
+
+                // Guarda para etapas posteriores
                 stash includes: "target/*.jar", name: "${env.APP_NAME}_release"
             }
         }
@@ -37,6 +45,7 @@ pipeline {
             }
             steps {
                 script {
+                    // Paso de análisis usando el plugin oficial de Fortify on Demand
                     fodStaticAssessment releaseId: "${env.FOD_RELEASE_ID}",
                         isMicroservice: false,
                         openSourceScan: 'false',
@@ -47,6 +56,7 @@ pipeline {
                         scanCentralBuildCommand: 'clean package -DskipTests',
                         scanCentralBuildFile: 'pom.xml'
 
+                    // Polling para esperar resultados y aplicar política
                     fodPollResults releaseId: "${env.FOD_RELEASE_ID}",
                         policyFailureBuildResultPreference: 1,
                         pollingInterval: 5
