@@ -14,6 +14,8 @@ pipeline {
             description: 'Fail pipeline if critical issues exceed this count')
         string(name: 'HIGH_THRESHOLD', defaultValue: '10', 
             description: 'Fail pipeline if high issues exceed this count')
+        string(name: 'SCAN_TIMEOUT_MINUTES', defaultValue: '120', 
+            description: 'Timeout in minutes for scan completion')
     }
 
     environment {
@@ -23,6 +25,7 @@ pipeline {
         FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
         GIT_URL        = "https://github.com/aisraelr/fortify-IWA-2024.git"
         GIT_REPO_NAME  = "fortify-IWA-2024"
+        SCAN_ID        = ""
     }
 
     stages {
@@ -31,13 +34,10 @@ pipeline {
                 script {
                     env.GIT_COMMIT = bat(script: "git rev-parse HEAD", returnStdout: true).trim()
                     env.GIT_BRANCH = bat(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
-                    echo "Repository: ${env.GIT_REPO_NAME}"
                     
                     env.CRITICAL_THRESHOLD_INT = params.CRITICAL_THRESHOLD.toInteger()
                     env.HIGH_THRESHOLD_INT = params.HIGH_THRESHOLD.toInteger()
-                    
-                    echo "Critical Threshold: ${env.CRITICAL_THRESHOLD_INT}"
-                    echo "High Threshold: ${env.HIGH_THRESHOLD_INT}"
+                    env.SCAN_TIMEOUT_MINUTES_INT = params.SCAN_TIMEOUT_MINUTES.toInteger()
                 }
             }
         }
@@ -57,63 +57,103 @@ pipeline {
                             string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
                             string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
                         ]) {
-                            // Ejecutar el scan
+                            // Paso 1: Ejecutar el scan y guardar output en archivo
                             bat """
                                 @echo off
-                                echo [INFO] Downloading fcli for Windows v3.8.1...
+                                echo [INFO] Downloading fcli...
                                 curl -L https://github.com/fortify/fcli/releases/download/v3.8.1/fcli-windows.zip -o fcli-windows.zip
-                                if %errorlevel% neq 0 exit 1
-                                
-                                echo [INFO] Extracting fcli...
                                 tar -xf fcli-windows.zip fcli.exe
-                                if %errorlevel% neq 0 exit 1
                                 
                                 echo [INFO] Logging into FoD...
                                 fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
-                                if %errorlevel% neq 0 exit 1
                                 
-                                echo [INFO] Uploading fat JAR for complete analysis...
-                                fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\\\iwa.jar" --fod-session jenkins
-                                if %errorlevel% neq 0 (
-                                    echo [WARNING] fcli returned error code, but scan may have been queued
-                                )
+                                echo [INFO] Uploading fat JAR...
+                                fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\\\iwa.jar" --fod-session jenkins > scan_output.txt
                                 
-                                echo [INFO] Logging out from FoD...
+                                echo [INFO] Logging out...
                                 fcli.exe fod session logout --fod-session jenkins
                             """
                             
-                            // Mensajes claros sin valores hardcodeados
-                            echo "✅ ===== SCAN ENVIADO EXITOSAMENTE ====="
-                            echo "📋 El Scan ID está visible EN EL OUTPUT DE ARRIBA"
-                            echo "🔍 Busca la línea que dice 'Id' seguida de un número"
-                            echo "🌐 Revisar en portal: ${params.FOD_URL}"
-                            echo "📝 Release ID: ${params.FOD_RELEASE_ID}"
-                            echo "========================================="
+                            // Paso 2: Leer el archivo y extraer Scan ID
+                            def scanOutput = readFile('scan_output.txt').trim()
+                            echo "Scan Output: ${scanOutput}"
                             
-                            echo "⚠️  IMPORTANTE: Copia el Scan ID del output de arriba"
-                            echo "💡 Ejemplo: Si ves '15894034 Static Pending', el Scan ID es 15894034"
+                            // Método simple para extraer el Scan ID
+                            def scanId = extractScanId(scanOutput)
+                            
+                            if (scanId) {
+                                env.SCAN_ID = scanId
+                                echo "✅ Scan ID capturado: ${env.SCAN_ID}"
+                            } else {
+                                error "❌ No se pudo extraer el Scan ID del output"
+                            }
                         }
-                    } else {
-                        echo "⏭️  FoD SAST scan skipped by parameter choice"
                     }
                 }
             }
         }
 
-        stage('Manual Validation Instructions') {
+        stage('Wait for Scan Completion') {
             steps {
                 script {
-                    if (params.FOD_SAST == true) {
-                        echo "📋 ===== INSTRUCCIONES PARA VALIDACIÓN ====="
-                        echo "1. 📝 COPIA el Scan ID del output de arriba"
-                        echo "2. 🌐 Ve al portal: https://ams.fortify.com"
-                        echo "3. 🔍 Busca el scan usando el Scan ID o Release ID"
-                        echo "4. 📊 Revisa los resultados:"
-                        echo "   - ⚡ Critical issues <= ${env.CRITICAL_THRESHOLD_INT}"
-                        echo "   - ⚠️  High issues <= ${env.HIGH_THRESHOLD_INT}"
-                        echo "5. ✅ Si todo está bien, el pipeline es SUCCESS"
-                        echo "6. ❌ Si se exceden umbrales, marca como FAILED"
-                        echo "============================================="
+                    if (params.FOD_SAST == true && env.SCAN_ID) {
+                        withCredentials([
+                            string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
+                            string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
+                        ]) {
+                            bat """
+                                @echo off
+                                echo [INFO] Waiting for scan ${env.SCAN_ID} to complete...
+                                
+                                fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
+                                
+                                set /a TIMEOUT_SECONDS=${env.SCAN_TIMEOUT_MINUTES_INT} * 60
+                                fcli.exe fod sast-scan wait-for ${env.SCAN_ID} --fod-session jenkins --timeout %TIMEOUT_SECONDS%
+                                if %errorlevel% neq 0 (
+                                    echo [ERROR] Scan timed out or failed
+                                    exit 1
+                                )
+                                
+                                echo [INFO] Getting scan results...
+                                fcli.exe fod sast-scan get ${env.SCAN_ID} --fod-session jenkins --output json > scan_results.json
+                                
+                                fcli.exe fod session logout --fod-session jenkins
+                            """
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Validate Scan Results') {
+            steps {
+                script {
+                    if (params.FOD_SAST == true && env.SCAN_ID && fileExists('scan_results.json')) {
+                        def results = readJSON file: 'scan_results.json'
+                        def critical = results.detailScanResult?.critical ?: 0
+                        def high = results.detailScanResult?.high ?: 0
+                        def status = results.analysisStatus ?: 'Unknown'
+                        
+                        echo "📊 SCAN RESULTS for ID: ${env.SCAN_ID}"
+                        echo "   Status: ${status}"
+                        echo "   Critical Issues: ${critical}"
+                        echo "   High Issues: ${high}"
+                        echo "   Threshold - Critical: ${env.CRITICAL_THRESHOLD_INT}"
+                        echo "   Threshold - High: ${env.HIGH_THRESHOLD_INT}"
+                        
+                        // Validar contra umbrales
+                        if (critical > env.CRITICAL_THRESHOLD_INT) {
+                            error "❌ BUILD FAILED: Critical issues (${critical}) > threshold (${env.CRITICAL_THRESHOLD_INT})"
+                        }
+                        
+                        if (high > env.HIGH_THRESHOLD_INT) {
+                            error "❌ BUILD FAILED: High issues (${high}) > threshold (${env.HIGH_THRESHOLD_INT})"
+                        }
+                        
+                        echo "✅ SCAN PASSED: All thresholds met"
+                        
+                    } else {
+                        error "❌ No se pudieron obtener resultados del scan"
                     }
                 }
             }
@@ -124,22 +164,67 @@ pipeline {
         always {
             echo "📋 RESUMEN EJECUCIÓN"
             echo "   Status: ${currentBuild.currentResult}"
+            echo "   Scan ID: ${env.SCAN_ID ?: 'N/A'}"
             echo "   FoD Portal: https://ams.fortify.com"
-            echo "   Release ID: ${params.FOD_RELEASE_ID}"
-            echo "   Scan ID: [COPIAR DEL OUTPUT DE ARRIBA]"
             
             // Limpieza
             bat """
                 @echo off
                 if exist fcli-windows.zip del fcli-windows.zip
                 if exist fcli.exe del fcli.exe
+                if exist scan_output.txt del scan_output.txt
+                if exist scan_results.json del scan_results.json
             """
             cleanWs()
         }
         success {
-            echo "✅ PIPELINE COMPLETADO"
-            echo "✅ Scan enviado a FoD exitosamente"
-            echo "✅ Revisar resultados manualmente en el portal"
+            echo "✅ PIPELINE EXITOSO"
+            echo "✅ Scan completado y validado"
+            echo "✅ Todos los umbrales de seguridad cumplidos"
+        }
+        failure {
+            echo "❌ PIPELINE FALLIDO"
+            echo "❌ Scan ID: ${env.SCAN_ID ?: 'N/A'}"
+            echo "❌ Revisar detalles en: https://ams.fortify.com"
         }
     }
+}
+
+// Función para extraer Scan ID sin usar Matcher (evita problemas de serialización)
+def extractScanId(String output) {
+    echo "Buscando Scan ID en el output..."
+    
+    // Dividir el output en líneas
+    def lines = output.split('\\r?\\n')
+    
+    // Buscar la línea que contiene el patrón del scan
+    for (line in lines) {
+        // Buscar líneas que tengan el formato de tabla de scan
+        if (line.contains('Static') && line.contains('Pending') && line.contains('STARTED')) {
+            echo "Línea encontrada: ${line}"
+            
+            // Dividir por espacios y buscar números de 8+ dígitos
+            def parts = line.trim().split('\\s+')
+            for (part in parts) {
+                if (part.isNumber() && part.length() >= 8) {
+                    echo "✅ Scan ID encontrado: ${part}"
+                    return part
+                }
+            }
+        }
+    }
+    
+    // Si no se encuentra en el formato esperado, buscar cualquier número de 8+ dígitos
+    for (line in lines) {
+        def words = line.trim().split('\\s+')
+        for (word in words) {
+            if (word.isNumber() && word.length() >= 8) {
+                echo "✅ Scan ID potencial encontrado: ${word}"
+                return word
+            }
+        }
+    }
+    
+    echo "❌ No se encontró Scan ID en el output"
+    return null
 }
