@@ -1,6 +1,8 @@
 name: Java CI with Debricked Scan v2
 
-on: [push, pull_request]
+# Ejecutar solo manualmente
+on:
+  workflow_dispatch:
 
 jobs:
   build-and-test:

@@ -1,6 +1,8 @@
 name: Debricked scan non-docker
 
-on: [push]
+# Ejecutar solo manualmente
+on:
+  workflow_dispatch:
 
 jobs:
   vulnerabilities-scan:
