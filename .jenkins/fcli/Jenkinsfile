@@ -6,36 +6,47 @@ pipeline {
     parameters {
         booleanParam(name: 'FOD_SAST', defaultValue: true,
             description: 'Run Fortify on Demand SAST scan using fcli')
+        string(name: 'FOD_URL', defaultValue: 'https://api.ams.fortify.com', 
+            description: 'FoD API URL')
+        string(name: 'FOD_RELEASE_ID', defaultValue: '1388854', 
+            description: 'FoD Release ID')
     }
 
     environment {
         // Ajusta si cambia el nombre o versión de la app
         APP_NAME       = "IWA-JAVA-2024"
         APP_VERSION    = "Github-2025"
-        GIT_URL        = scm.getUserRemoteConfigs()[0].getUrl()
-        GIT_REPO_NAME  = GIT_URL.split('/').last().replace('.git', '')
-
+        
         // Credenciales
         FOD_CLIENT_ID     = credentials('iwa-fod-client-id')
         FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
 
-        // URL y Release ID configurables
-        FOD_URL        = "${params.FOD_URL ?: 'https://api.ams.fortify.com'}"
-        FOD_RELEASE_ID = "${params.FOD_RELEASE_ID ?: '1388854'}"
-
-        // Variables estilo GitHub
-        GITHUB_SHA        = sh (script: "git rev-parse HEAD", returnStdout: true).trim()
-        GITHUB_REPOSITORY = "${env.GIT_REPO_NAME}"
-        GITHUB_REF_NAME   = "jenkins"
+        // Variables para Git (modificado para Windows)
+        GIT_URL        = "https://github.com/aisraelr/fortify-IWA-2024.git"
+        GIT_REPO_NAME  = "fortify-IWA-2024"
     }
 
     stages {
+        stage('Initialize') {
+            steps {
+                script {
+                    // Obtener información de Git de forma compatible con Windows
+                    env.GIT_COMMIT = bat(script: "git rev-parse HEAD", returnStdout: true).trim()
+                    env.GIT_BRANCH = bat(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
+                    
+                    echo "Repository: ${env.GIT_REPO_NAME}"
+                    echo "Commit: ${env.GIT_COMMIT}"
+                    echo "Branch: ${env.GIT_BRANCH}"
+                }
+            }
+        }
+
         stage('Build') {
             steps {
                 bat "mvn clean package -DskipTests"
                 junit '**/target/surefire-reports/TEST-*.xml'
                 archiveArtifacts artifacts: "target/*.jar", fingerprint: true
-                stash includes: "target/*.jar", name: "%APP_NAME%_release"
+                stash includes: "target/*.jar", name: "${env.APP_NAME}_release"
             }
         }
 
@@ -44,15 +55,70 @@ pipeline {
                 expression { params.FOD_SAST == true }
             }
             steps {
-                bat """
-                    curl -L https://github.com/fortify/fcli/releases/download/latest/fcli-windows.zip -o fcli-windows.zip
-                    tar -xf fcli-windows.zip fcli.exe
-                    fcli.exe fod session login --client-id %FOD_CLIENT_ID% --client-secret %FOD_CLIENT_SECRET% --url %FOD_URL% --fod-session jenkins
-                    fcli.exe fod sast-scan start --release-id %FOD_RELEASE_ID% --upload target/*.jar --fod-session jenkins --store curScan
-                    fcli.exe fod sast-scan wait-for ::curScan:: --fod-session jenkins
-                    fcli.exe fod session logout --fod-session jenkins
-                """
+                script {
+                    withCredentials([
+                        string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
+                        string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
+                    ]) {
+                        bat """
+                            @echo off
+                            echo [INFO] Downloading fcli for Windows...
+                            curl -L https://github.com/fortify/fcli/releases/download/v6.0.0/fcli-windows-x86_64.zip -o fcli-windows.zip
+                            if %errorlevel% neq 0 (
+                                echo [ERROR] Failed to download fcli
+                                exit 1
+                            )
+                            
+                            echo [INFO] Extracting fcli...
+                            tar -xf fcli-windows.zip fcli.exe
+                            if %errorlevel% neq 0 (
+                                echo [ERROR] Failed to extract fcli
+                                exit 1
+                            )
+                            
+                            echo [INFO] Logging into FoD...
+                            fcli.exe fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
+                            if %errorlevel% neq 0 (
+                                echo [ERROR] Failed to login to FoD
+                                exit 1
+                            )
+                            
+                            echo [INFO] Starting SAST scan...
+                            fcli.exe fod sast-scan start --release-id "${params.FOD_RELEASE_ID}" --upload "target/*.jar" --fod-session jenkins --store curScan
+                            if %errorlevel% neq 0 (
+                                echo [ERROR] Failed to start SAST scan
+                                fcli.exe fod session logout --fod-session jenkins
+                                exit 1
+                            )
+                            
+                            echo [INFO] Waiting for scan to complete...
+                            fcli.exe fod sast-scan wait-for ::curScan:: --fod-session jenkins
+                            if %errorlevel% neq 0 (
+                                echo [ERROR] Scan failed or timed out
+                                fcli.exe fod session logout --fod-session jenkins
+                                exit 1
+                            )
+                            
+                            echo [INFO] Logging out from FoD...
+                            fcli.exe fod session logout --fod-session jenkins
+                            echo [SUCCESS] FoD SAST scan completed successfully
+                        """
+                    }
+                }
             }
         }        
+    }
+
+    post {
+        always {
+            echo "Pipeline execution completed"
+            cleanWs() // Limpiar workspace
+        }
+        success {
+            echo "Pipeline succeeded!"
+        }
+        failure {
+            echo "Pipeline failed!"
+        }
     }
 }
