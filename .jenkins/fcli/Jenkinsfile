@@ -14,8 +14,6 @@ pipeline {
             description: 'Fail pipeline if critical issues exceed this count')
         string(name: 'HIGH_THRESHOLD', defaultValue: '10', 
             description: 'Fail pipeline if high issues exceed this count')
-        string(name: 'SCAN_TIMEOUT_MINUTES', defaultValue: '120', 
-            description: 'Timeout in minutes for scan completion')
     }
 
     environment {
@@ -37,7 +35,6 @@ pipeline {
                     
                     env.CRITICAL_THRESHOLD_INT = params.CRITICAL_THRESHOLD.toInteger()
                     env.HIGH_THRESHOLD_INT = params.HIGH_THRESHOLD.toInteger()
-                    env.SCAN_TIMEOUT_MINUTES_INT = params.SCAN_TIMEOUT_MINUTES.toInteger()
                     
                     echo "Critical Threshold: ${env.CRITICAL_THRESHOLD_INT}"
                     echo "High Threshold: ${env.HIGH_THRESHOLD_INT}"
@@ -60,7 +57,7 @@ pipeline {
                             string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
                             string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
                         ]) {
-                            // Ejecutar el scan directamente sin captura compleja
+                            // Ejecutar el scan
                             bat """
                                 @echo off
                                 echo [INFO] Downloading fcli for Windows v3.8.1...
@@ -76,7 +73,7 @@ pipeline {
                                 if %errorlevel% neq 0 exit 1
                                 
                                 echo [INFO] Uploading fat JAR for complete analysis...
-                                fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\\\iwa.jar" --fod-session jenkins --store curScan
+                                fcli.exe fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file "target\\\\iwa.jar" --fod-session jenkins
                                 if %errorlevel% neq 0 (
                                     echo [WARNING] fcli returned error code, but scan may have been queued
                                 )
@@ -85,19 +82,16 @@ pipeline {
                                 fcli.exe fod session logout --fod-session jenkins
                             """
                             
-                            // El Scan ID está visible en el output de la consola
-                            // Ejemplo: 15893686 (visible en tu último output)
-                            echo "✅ Scan submitted successfully!"
-                            echo "📋 El Scan ID está visible en el output de arriba"
+                            // Mensajes claros sin valores hardcodeados
+                            echo "✅ ===== SCAN ENVIADO EXITOSAMENTE ====="
+                            echo "📋 El Scan ID está visible EN EL OUTPUT DE ARRIBA"
+                            echo "🔍 Busca la línea que dice 'Id' seguida de un número"
                             echo "🌐 Revisar en portal: ${params.FOD_URL}"
-                            echo "🔍 Buscar por Release ID: ${params.FOD_RELEASE_ID}"
+                            echo "📝 Release ID: ${params.FOD_RELEASE_ID}"
+                            echo "========================================="
                             
-                            // Para continuar con los próximos stages, podemos:
-                            // 1. Pedir el Scan ID manualmente O
-                            // 2. Saltar la espera y validación automática
-                            
-                            echo "⏭️  Saltando espera automática - revisar resultados manualmente"
-                            echo "💡 El Scan ID de este ejecución es: 15893686"
+                            echo "⚠️  IMPORTANTE: Copia el Scan ID del output de arriba"
+                            echo "💡 Ejemplo: Si ves '15894034 Static Pending', el Scan ID es 15894034"
                         }
                     } else {
                         echo "⏭️  FoD SAST scan skipped by parameter choice"
@@ -110,14 +104,16 @@ pipeline {
             steps {
                 script {
                     if (params.FOD_SAST == true) {
-                        echo "📋 ===== INSTRUCCIONES PARA VALIDACIÓN MANUAL ====="
-                        echo "1. 🌐 Ve al portal: https://ams.fortify.com"
-                        echo "2. 🔍 Busca el Scan ID: 15893686"
-                        echo "3. 📊 Revisa los resultados del scan"
-                        echo "4. ⚡ Critical issues: deben ser <= ${env.CRITICAL_THRESHOLD_INT}"
-                        echo "5. ⚠️  High issues: deben ser <= ${env.HIGH_THRESHOLD_INT}"
-                        echo "6. ✅ Si los issues exceden los umbrales, marca el pipeline como FAILED"
-                        echo "=================================================="
+                        echo "📋 ===== INSTRUCCIONES PARA VALIDACIÓN ====="
+                        echo "1. 📝 COPIA el Scan ID del output de arriba"
+                        echo "2. 🌐 Ve al portal: https://ams.fortify.com"
+                        echo "3. 🔍 Busca el scan usando el Scan ID o Release ID"
+                        echo "4. 📊 Revisa los resultados:"
+                        echo "   - ⚡ Critical issues <= ${env.CRITICAL_THRESHOLD_INT}"
+                        echo "   - ⚠️  High issues <= ${env.HIGH_THRESHOLD_INT}"
+                        echo "5. ✅ Si todo está bien, el pipeline es SUCCESS"
+                        echo "6. ❌ Si se exceden umbrales, marca como FAILED"
+                        echo "============================================="
                     }
                 }
             }
@@ -126,11 +122,11 @@ pipeline {
 
     post {
         always {
-            echo "📋 PIPELINE SUMMARY"
+            echo "📋 RESUMEN EJECUCIÓN"
             echo "   Status: ${currentBuild.currentResult}"
             echo "   FoD Portal: https://ams.fortify.com"
             echo "   Release ID: ${params.FOD_RELEASE_ID}"
-            echo "   Scan ID: 15893686 (ver en output de consola)"
+            echo "   Scan ID: [COPIAR DEL OUTPUT DE ARRIBA]"
             
             // Limpieza
             bat """
@@ -142,7 +138,7 @@ pipeline {
         }
         success {
             echo "✅ PIPELINE COMPLETADO"
-            echo "✅ Scan enviado exitosamente a FoD"
+            echo "✅ Scan enviado a FoD exitosamente"
             echo "✅ Revisar resultados manualmente en el portal"
         }
     }
