@@ -73,6 +73,7 @@ pipeline {
             }
         }
 
+
         stage('Wait for Scan Completion') {
             steps {
                 echo "⏳ Waiting for scan completion..."
