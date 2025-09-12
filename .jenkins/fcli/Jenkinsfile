@@ -242,6 +242,52 @@ pipeline {
 
     }
 
+        stage('Prepare OSS Package') {
+            steps {
+                script {
+                    bat """
+                        @echo off
+                        echo [INFO] Generando paquete OSS con ScanCentral...
+                        if exist oss-scan.zip del oss-scan.zip
+                        scancentral.bat package -bt mvn -oss -o oss-scan.zip
+                    """
+                }
+            }
+        }
+
+        stage('FoD OSS Scan') {
+            steps {
+                script {
+                    def FCLI_HOME = "${env.WORKSPACE}\\fcli"
+
+                    withCredentials([
+                        string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
+                        string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
+                    ]) {
+                        bat """
+                            @echo off
+                            echo [INFO] Logging into FoD for OSS Scan...
+                            "${FCLI_HOME}\\fcli.exe" fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
+
+                            echo [INFO] Starting OSS Scan...
+                            "${FCLI_HOME}\\fcli.exe" fod oss-scan start --rel "${params.FOD_RELEASE_ID}" --file "oss-scan.zip" --fod-session jenkins --output json > oss-scan-output.json
+
+                            echo [INFO] Logging out...
+                            "${FCLI_HOME}\\fcli.exe" fod session logout --fod-session jenkins
+                        """
+
+                        if (fileExists('oss-scan-output.json')) {
+                            def ossResults = readFile('oss-scan-output.json')
+                            echo "OSS Scan Output:\n${ossResults}"
+                        } else {
+                            echo "⚠️ No se generó oss-scan-output.json"
+                        }
+                    }
+                }
+            }
+        }
+
+
     post {
         always {
             script {
