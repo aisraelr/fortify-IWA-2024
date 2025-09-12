@@ -97,7 +97,8 @@ pipeline {
                                 "${FCLI_HOME}\\fcli.exe" fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
 
                                 echo [INFO] Uploading artifact...
-                                "${FCLI_HOME}\\fcli.exe" fod sast-scan start --rel ${params.FOD_RELEASE_ID} --file target\\iwa.jar --fod-session jenkins > scan_output.txt
+                                echo [DEBUG] Usando Release ID: ${params.FOD_RELEASE_ID}
+                                "${FCLI_HOME}\\fcli.exe" fod sast-scan start --rel "${params.FOD_RELEASE_ID}" --file target\\iwa.jar --fod-session jenkins > scan_output.txt
 
                                 echo [INFO] Logging out...
                                 "${FCLI_HOME}\\fcli.exe" fod session logout --fod-session jenkins
