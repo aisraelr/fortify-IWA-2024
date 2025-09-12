@@ -240,8 +240,6 @@ pipeline {
             }
         }
 
-    }
-
         stage('Prepare OSS Package') {
             steps {
                 script {
@@ -285,8 +283,9 @@ pipeline {
                     }
                 }
             }
-        }
+        }        
 
+    }
 
     post {
         always {
