@@ -45,7 +45,7 @@ pipeline {
                     // El plugin toma las credenciales configuradas en Jenkins
                     fodStaticAssessment releaseId: "${env.FOD_RELEASE_ID}",
                         isMicroservice: false,
-                        openSourceScan: 'false',
+                        openSourceScan: 'true',
                         inProgressBuildResultType: 'WarnBuild',
                         inProgressScanActionType: 'Queue',
                         remediationScanPreferenceType: 'NonRemediationScanOnly',
