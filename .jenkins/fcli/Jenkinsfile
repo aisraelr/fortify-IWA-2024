@@ -11,7 +11,7 @@ pipeline {
             description: 'Run Fortify on Demand SAST scan using fcli')
         string(name: 'FOD_URL', defaultValue: 'https://api.ams.fortify.com',
             description: 'FoD API URL')
-        string(name: 'FOD_RELEASE_ID', defaultValue: '1503133',
+        string(name: 'FOD_RELEASE_ID', defaultValue: '1388854',
             description: 'FoD Release ID')
         string(name: 'CRITICAL_THRESHOLD', defaultValue: '0',
             description: 'Fail pipeline if critical issues exceed this count')
