@@ -23,6 +23,11 @@ pipeline {
             description: 'Number of additional wait-for retry attempts (after the first one)')
         string(name: 'WAIT_RETRY_DELAY_MINUTES', defaultValue: '2',
             description: 'Minutes to wait between retries')
+        //
+        string(name: 'OSS_CRITICAL_THRESHOLD', defaultValue: '0',
+            description: 'Fail pipeline if OSS critical issues exceed this count')
+        string(name: 'OSS_HIGH_THRESHOLD', defaultValue: '10',
+            description: 'Fail pipeline if OSS high issues exceed this count')        
     }
 
     environment {
@@ -283,7 +288,52 @@ pipeline {
                     }
                 }
             }
-        }        
+        }
+
+        stage('Validate OSS Results') {
+            steps {
+                script {
+                    if (!fileExists('oss-scan-output.json')) {
+                        error "❌ No se encontró oss-scan-output.json con resultados OSS."
+                    }
+
+                    def rawText = readFile('oss-scan-output.json')
+
+                    // Buscar bloque JSON válido
+                    def jsonStart = rawText.indexOf('[')
+                    if (jsonStart < 0) {
+                        error "❌ No se encontró bloque JSON en oss-scan-output.json"
+                    }
+
+                    def jsonText = rawText.substring(jsonStart).trim()
+                    echo "📝 Bloque JSON OSS detectado:"
+                    echo jsonText
+
+                    def ossResults = readJSON text: jsonText
+                    def result = ossResults[0]
+
+                    def status = result.analysisStatusType ?: 'Unknown'
+                    def criticalCount = result.issueCountCritical ?: 0
+                    def highCount = result.issueCountHigh ?: 0
+
+                    echo "📊 OSS SCAN RESULTS"
+                    echo "   Status: ${status}"
+                    echo "   Critical Issues: ${criticalCount}"
+                    echo "   High Issues: ${highCount}"
+                    echo "   Threshold - Critical: ${params.OSS_CRITICAL_THRESHOLD}"
+                    echo "   Threshold - High: ${params.OSS_HIGH_THRESHOLD}"
+
+                    if (criticalCount > params.OSS_CRITICAL_THRESHOLD.toInteger()) {
+                        error "❌ BUILD FAILED: OSS Critical issues (${criticalCount}) > threshold (${params.OSS_CRITICAL_THRESHOLD})"
+                    }
+                    if (highCount > params.OSS_HIGH_THRESHOLD.toInteger()) {
+                        error "❌ BUILD FAILED: OSS High issues (${highCount}) > threshold (${params.OSS_HIGH_THRESHOLD})"
+                    }
+
+                    echo "✅ OSS SCAN PASSED: Todos los umbrales cumplidos"
+                }
+            }
+        }
 
     }
 
