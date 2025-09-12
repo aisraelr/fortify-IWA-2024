@@ -1,24 +1,35 @@
 #!/usr/bin/env groovy
 
-// Variables globales para persistir los Scan IDs entre stages y post
+// Variables globales para persistir los Scan IDs entre stages y en post
 def GLOBAL_SCAN_ID_SAST = ""
-def GLOBAL_SCAN_ID_OSS = ""
+def GLOBAL_SCAN_ID_OSS  = ""
 
 pipeline {
     agent any
 
     parameters {
-        booleanParam(name: 'FOD_SAST', defaultValue: true, description: 'Run Fortify on Demand SAST scan using fcli')
-        string(name: 'FOD_URL', defaultValue: 'https://api.ams.fortify.com', description: 'FoD API URL')
-        string(name: 'FOD_RELEASE_ID', defaultValue: '1388854', description: 'FoD Release ID')
-        string(name: 'CRITICAL_THRESHOLD', defaultValue: '0', description: 'Fail pipeline if critical issues exceed this count')
-        string(name: 'HIGH_THRESHOLD', defaultValue: '10', description: 'Fail pipeline if high issues exceed this count')
-        string(name: 'SCAN_TIMEOUT_MINUTES', defaultValue: '120', description: 'Timeout in minutes for single wait-for attempt')
-        string(name: 'WAIT_RETRIES', defaultValue: '2', description: 'Number of additional wait-for retry attempts')
-        string(name: 'WAIT_RETRY_DELAY_MINUTES', defaultValue: '2', description: 'Minutes to wait between retries')
-
-        string(name: 'OSS_CRITICAL_THRESHOLD', defaultValue: '0', description: 'Fail pipeline if OSS critical issues exceed this count')
-        string(name: 'OSS_HIGH_THRESHOLD', defaultValue: '10', description: 'Fail pipeline if OSS high issues exceed this count')
+        booleanParam(name: 'FOD_SAST', defaultValue: true,
+            description: 'Run Fortify on Demand SAST scan using fcli')
+        booleanParam(name: 'FOD_OSS', defaultValue: true,
+            description: 'Run Fortify on Demand OSS scan using fcli')
+        string(name: 'FOD_URL', defaultValue: 'https://api.ams.fortify.com',
+            description: 'FoD API URL')
+        string(name: 'FOD_RELEASE_ID', defaultValue: '1388854',
+            description: 'FoD Release ID')
+        string(name: 'CRITICAL_THRESHOLD', defaultValue: '0',
+            description: 'Fail pipeline if critical issues exceed this count')
+        string(name: 'HIGH_THRESHOLD', defaultValue: '10',
+            description: 'Fail pipeline if high issues exceed this count')
+        string(name: 'SCAN_TIMEOUT_MINUTES', defaultValue: '120',
+            description: 'Timeout in minutes for wait-for attempts')
+        string(name: 'WAIT_RETRIES', defaultValue: '2',
+            description: 'Number of additional wait-for retry attempts')
+        string(name: 'WAIT_RETRY_DELAY_MINUTES', defaultValue: '2',
+            description: 'Minutes to wait between retries')
+        string(name: 'OSS_CRITICAL_THRESHOLD', defaultValue: '0',
+            description: 'Fail pipeline if OSS critical issues exceed this count')
+        string(name: 'OSS_HIGH_THRESHOLD', defaultValue: '10',
+            description: 'Fail pipeline if OSS high issues exceed this count')
     }
 
     environment {
@@ -27,7 +38,6 @@ pipeline {
         FOD_CLIENT_ID     = credentials('iwa-fod-client-id')
         FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
         GIT_URL        = "https://github.com/aisraelr/fortify-IWA-2024.git"
-        GIT_REPO_NAME  = "fortify-IWA-2024"
     }
 
     stages {
@@ -68,71 +78,7 @@ pipeline {
         }
 
         stage('FoD SAST Scan') {
-            steps {
-                script {
-                    if (!params.FOD_SAST) {
-                        echo "FoD SAST deshabilitado."
-                    } else {
-                        def FCLI_HOME = "${env.WORKSPACE}\\fcli"
-                        withCredentials([
-                            string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
-                            string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
-                        ]) {
-                            bat """
-                                @echo off
-                                echo [INFO] Logging into FoD...
-                                "${FCLI_HOME}\\fcli.exe" fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
-
-                                echo [INFO] Uploading artifact...
-                                "${FCLI_HOME}\\fcli.exe" fod sast-scan start --rel "${params.FOD_RELEASE_ID}" --file target\\iwa.jar --fod-session jenkins --output json > sast-output.json
-
-                                echo [INFO] Logging out...
-                                "${FCLI_HOME}\\fcli.exe" fod session logout --fod-session jenkins
-                            """
-                            def output = readFile('sast-output.json')
-                            GLOBAL_SCAN_ID_SAST = parseScanId(output, 'Static')
-                            echo "✅ Scan ID SAST: ${GLOBAL_SCAN_ID_SAST}"
-                            currentBuild.displayName = "#${BUILD_NUMBER} - SAST ${GLOBAL_SCAN_ID_SAST}"
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Wait for SAST Scan Completion') {
-            steps {
-                script {
-                    if (params.FOD_SAST && GLOBAL_SCAN_ID_SAST) {
-                        waitForScan('SAST', GLOBAL_SCAN_ID_SAST, params.SCAN_TIMEOUT_MINUTES.toInteger(), params.WAIT_RETRIES.toInteger(), params.WAIT_RETRY_DELAY_MINUTES.toInteger())
-                    }
-                }
-            }
-        }
-
-        stage('Validate SAST Results') {
-            steps {
-                script {
-                    if (params.FOD_SAST && GLOBAL_SCAN_ID_SAST) {
-                        validateScanResults('sast-output.json', params.CRITICAL_THRESHOLD.toInteger(), params.HIGH_THRESHOLD.toInteger())
-                    }
-                }
-            }
-        }
-
-        stage('Prepare OSS Package') {
-            steps {
-                script {
-                    bat """
-                        @echo off
-                        echo [INFO] Generando paquete OSS con ScanCentral...
-                        if exist oss-scan.zip del oss-scan.zip
-                        scancentral.bat package -bt mvn -oss -o oss-scan.zip
-                    """
-                }
-            }
-        }
-
-        stage('FoD OSS Scan') {
+            when { expression { return params.FOD_SAST } }
             steps {
                 script {
                     def FCLI_HOME = "${env.WORKSPACE}\\fcli"
@@ -142,17 +88,74 @@ pipeline {
                     ]) {
                         bat """
                             @echo off
-                            echo [INFO] Logging into FoD for OSS Scan...
                             "${FCLI_HOME}\\fcli.exe" fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
-
-                            echo [INFO] Starting OSS Scan...
-                            "${FCLI_HOME}\\fcli.exe" fod oss-scan start --rel "${params.FOD_RELEASE_ID}" --file "oss-scan.zip" --fod-session jenkins --output json > oss-output.json
-
-                            echo [INFO] Logging out...
+                            "${FCLI_HOME}\\fcli.exe" fod sast-scan start --rel "${params.FOD_RELEASE_ID}" --file target\\iwa.jar --fod-session jenkins --output json > sast-output.json 2>&1
                             "${FCLI_HOME}\\fcli.exe" fod session logout --fod-session jenkins
                         """
+                        if (!fileExists('sast-output.json') || readFile('sast-output.json').trim() == '') {
+                            error "❌ No se generó sast-output.json o está vacío"
+                        }
+                        def output = readFile('sast-output.json')
+                        GLOBAL_SCAN_ID_SAST = extractScanId(output)
+                        if (!GLOBAL_SCAN_ID_SAST) error "❌ No se pudo extraer el Scan ID SAST"
+                        echo "✅ Scan ID SAST: ${GLOBAL_SCAN_ID_SAST}"
+                    }
+                }
+            }
+        }
+
+        stage('Wait for SAST Scan Completion') {
+            when { expression { return params.FOD_SAST && GLOBAL_SCAN_ID_SAST } }
+            steps {
+                script {
+                    waitForScan('SAST', GLOBAL_SCAN_ID_SAST)
+                }
+            }
+        }
+
+        stage('Validate SAST Results') {
+            when { expression { return params.FOD_SAST } }
+            steps {
+                script {
+                    validateScanResults('sast-output.json', params.CRITICAL_THRESHOLD.toInteger(), params.HIGH_THRESHOLD.toInteger(), "SAST")
+                }
+            }
+        }
+
+        stage('Prepare OSS Package') {
+            when { expression { return params.FOD_OSS } }
+            steps {
+                script {
+                    bat """
+                        @echo off
+                        if exist oss-scan.zip del oss-scan.zip
+                        scancentral.bat package -bt mvn -oss -o oss-scan.zip
+                    """
+                }
+            }
+        }
+
+        stage('FoD OSS Scan') {
+            when { expression { return params.FOD_OSS } }
+            steps {
+                script {
+                    def FCLI_HOME = "${env.WORKSPACE}\\fcli"
+                    withCredentials([
+                        string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
+                        string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
+                    ]) {
+                        bat """
+                            @echo off
+                            "${FCLI_HOME}\\fcli.exe" fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
+                            "${FCLI_HOME}\\fcli.exe" fod oss-scan start --rel "${params.FOD_RELEASE_ID}" --file oss-scan.zip --fod-session jenkins --output json > oss-output.json 2>&1
+                            "${FCLI_HOME}\\fcli.exe" fod session logout --fod-session jenkins
+                        """
+                        if (!fileExists('oss-output.json') || readFile('oss-output.json').trim() == '') {
+                            error "❌ No se generó oss-output.json o está vacío"
+                        }
                         def output = readFile('oss-output.json')
-                        GLOBAL_SCAN_ID_OSS = parseScanId(output, 'OpenSource')
+                        GLOBAL_SCAN_ID_OSS = extractScanId(output)
+                        if (!GLOBAL_SCAN_ID_OSS) error "❌ No se pudo extraer el Scan ID OSS"
                         echo "✅ Scan ID OSS: ${GLOBAL_SCAN_ID_OSS}"
                     }
                 }
@@ -160,24 +163,23 @@ pipeline {
         }
 
         stage('Wait for OSS Scan Completion') {
+            when { expression { return params.FOD_OSS && GLOBAL_SCAN_ID_OSS } }
             steps {
                 script {
-                    if (GLOBAL_SCAN_ID_OSS) {
-                        waitForScan('OSS', GLOBAL_SCAN_ID_OSS, params.SCAN_TIMEOUT_MINUTES.toInteger(), params.WAIT_RETRIES.toInteger(), params.WAIT_RETRY_DELAY_MINUTES.toInteger())
-                    }
+                    waitForScan('OSS', GLOBAL_SCAN_ID_OSS)
                 }
             }
         }
 
         stage('Validate OSS Results') {
+            when { expression { return params.FOD_OSS } }
             steps {
                 script {
-                    if (GLOBAL_SCAN_ID_OSS) {
-                        validateScanResults('oss-output.json', params.OSS_CRITICAL_THRESHOLD.toInteger(), params.OSS_HIGH_THRESHOLD.toInteger())
-                    }
+                    validateScanResults('oss-output.json', params.OSS_CRITICAL_THRESHOLD.toInteger(), params.OSS_HIGH_THRESHOLD.toInteger(), "OSS")
                 }
             }
         }
+
     }
 
     post {
@@ -187,65 +189,63 @@ pipeline {
                 echo "   Status: ${currentBuild.currentResult}"
                 echo "   SAST Scan ID: ${GLOBAL_SCAN_ID_SAST ?: 'N/A'}"
                 echo "   OSS Scan ID: ${GLOBAL_SCAN_ID_OSS ?: 'N/A'}"
+                cleanWs()
             }
         }
     }
 }
 
+// =======================
 // Funciones auxiliares
+// =======================
 
-def parseScanId(String output, String scanType) {
-    def json = readJSON text: output
-    def obj = json instanceof List ? json[0] : json
-    if (obj.scanType == scanType && obj.scanId) {
-        return obj.scanId.toString()
-    }
+def extractScanId(String output) {
+    if (!output) return null
+    def matcher = (output =~ /"scanId"\s*:\s*(\d+)/)
+    if (matcher.find()) return matcher.group(1)
     return null
 }
 
-def waitForScan(String type, String scanId, int timeoutMinutes, int retries, int delayMinutes) {
+def waitForScan(String type, String scanId) {
     def FCLI_HOME = "${env.WORKSPACE}\\fcli"
+    int retries = params.WAIT_RETRIES.toInteger()
+    int delayMin = params.WAIT_RETRY_DELAY_MINUTES.toInteger()
+    int maxAttempts = 1 + retries
     boolean success = false
-    int attempts = 1 + retries
 
     withCredentials([
         string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
         string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
     ]) {
-        for (int i = 1; i <= attempts; i++) {
-            echo "🔁 Wait-for ${type} attempt ${i}/${attempts} (timeout ${timeoutMinutes}m)..."
+        for (int attempt=1; attempt<=maxAttempts; attempt++) {
+            echo "🔁 Wait-for ${type} attempt ${attempt}/${maxAttempts}"
             def rc = bat(script: """
                 @echo off
                 "${FCLI_HOME}\\fcli.exe" fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
-                "${FCLI_HOME}\\fcli.exe" fod ${type == 'SAST' ? 'sast-scan' : 'oss-scan'} wait-for ${scanId} --fod-session jenkins --timeout ${timeoutMinutes}m --output json > wait-${type.toLowerCase()}.json
+                "${FCLI_HOME}\\fcli.exe" fod ${type.toLowerCase()}-scan wait-for ${scanId} --fod-session jenkins --timeout ${params.SCAN_TIMEOUT_MINUTES}m --output json > wait-${type}.json 2>&1
                 "${FCLI_HOME}\\fcli.exe" fod session logout --fod-session jenkins
             """, returnStatus: true)
             if (rc == 0) { success = true; break }
-            if (i < attempts) { sleep time: delayMinutes, unit: 'MINUTES' }
+            else if (attempt < maxAttempts) { sleep time: delayMin, unit: 'MINUTES' }
         }
     }
-
-    if (!success) {
-        error "❌ Wait-for ${type} scan ${scanId} failed after ${attempts} attempts"
-    }
+    if (!success) error "❌ Wait-for ${type} scan ${scanId} failed after ${maxAttempts} attempts"
 }
 
-def validateScanResults(String filePath, int criticalThreshold, int highThreshold) {
-    if (!fileExists(filePath)) { error "❌ No se encontró ${filePath}" }
-    def jsonText = readFile(filePath)
-    def json = readJSON text: jsonText
-    def obj = json instanceof List ? json[0] : json
-    def status = obj.analysisStatusType ?: 'Unknown'
-    def critical = obj.issueCountCritical ?: 0
-    def high = obj.issueCountHigh ?: 0
-
-    echo "📊 Scan Results (${filePath})"
+def validateScanResults(String file, int criticalThreshold, int highThreshold, String type) {
+    if (!fileExists(file)) error "❌ No se encontró ${file}"
+    def raw = readFile(file).trim()
+    if (raw == '') error "❌ ${file} está vacío"
+    def json = readJSON text: raw
+    def result = json[0]
+    def status = result.analysisStatusType ?: 'Unknown'
+    def criticalCount = result.issueCountCritical ?: 0
+    def highCount = result.issueCountHigh ?: 0
+    echo "📊 ${type} SCAN RESULTS"
     echo "   Status: ${status}"
-    echo "   Critical: ${critical} (Threshold: ${criticalThreshold})"
-    echo "   High: ${high} (Threshold: ${highThreshold})"
-
-    if (critical > criticalThreshold) { error "❌ Critical issues (${critical}) > threshold (${criticalThreshold})" }
-    if (high > highThreshold) { error "❌ High issues (${high}) > threshold (${highThreshold})" }
-
-    echo "✅ Scan passed"
+    echo "   Critical Issues: ${criticalCount} (Threshold: ${criticalThreshold})"
+    echo "   High Issues: ${highCount} (Threshold: ${highThreshold})"
+    if (criticalCount > criticalThreshold) error "❌ ${type} Critical issues exceed threshold"
+    if (highCount > highThreshold) error "❌ ${type} High issues exceed threshold"
+    echo "✅ ${type} scan passed all thresholds"
 }
