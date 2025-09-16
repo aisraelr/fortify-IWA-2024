@@ -1,33 +1,27 @@
 #!/usr/bin/env groovy
 
+// Variable global para persistir el Scan ID
+def GLOBAL_SCAN_ID = ""
+
 pipeline {
     agent any
 
     parameters {
-        // === Homologados con SAST ===
         string(name: 'FOD_URL', defaultValue: 'https://api.ams.fortify.com',
             description: 'FoD API URL')
         string(name: 'FOD_RELEASE_ID', defaultValue: '1388854',
             description: 'FoD Release ID')
         string(name: 'SCAN_TIMEOUT_MINUTES', defaultValue: '120',
-            description: 'Timeout in minutes for single wait-for attempt')
+            description: 'Timeout en minutos para un intento de wait-for')
         string(name: 'WAIT_RETRIES', defaultValue: '2',
-            description: 'Number of additional wait-for retry attempts (after the first one)')
+            description: 'Número de reintentos adicionales de wait-for')
         string(name: 'WAIT_RETRY_DELAY_MINUTES', defaultValue: '2',
-            description: 'Minutes to wait between retries')
-
-        // === Específicos de SCA ===
-        string(name: 'BUILD_TOOL', defaultValue: 'maven',
-            description: 'Build tool for dependency resolution (maven/gradle/npm/yarn)')
-        string(name: 'SCA_OUTPUT', defaultValue: 'sca-results.json',
-            description: 'File where OSS scan results will be exported')
+            description: 'Minutos a esperar entre reintentos')
     }
 
     environment {
         APP_NAME       = "IWA-JAVA-2024"
         APP_VERSION    = "Github-2025"
-        FOD_CLIENT_ID     = credentials('iwa-fod-client-id')
-        FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
         GIT_URL        = "https://github.com/aisraelr/fortify-IWA-2024.git"
         GIT_REPO_NAME  = "fortify-IWA-2024"
     }
@@ -40,6 +34,13 @@ pipeline {
                     env.GIT_BRANCH = bat(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
                     env.SCAN_TIMEOUT_MINUTES_INT = params.SCAN_TIMEOUT_MINUTES.toInteger()
                 }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                bat "mvn clean package -DskipTests"
+                archiveArtifacts artifacts: "target/*.jar", fingerprint: true
             }
         }
 
@@ -60,8 +61,8 @@ pipeline {
                             if not exist "${FCLI_HOME}" mkdir "${FCLI_HOME}"
                             if not exist "${FCLI_EXE}" (
                                 echo [INFO] Descargando fcli...
-                                curl -L https://github.com/fortify/fcli/releases/download/v3.8.1/fcli-windows.zip -o "${FCLI_HOME}\\fcli-windows.zip"
-                                tar -xf "${FCLI_HOME}\\fcli-windows.zip" -C "${FCLI_HOME}" fcli.exe
+                                curl -L https://github.com/fortify/fcli/releases/latest/download/fcli-windows.zip -o "${FCLI_HOME}\\fcli-windows.zip"
+                                powershell -Command "Expand-Archive -Path '${FCLI_HOME}\\fcli-windows.zip' -DestinationPath '${FCLI_HOME}' -Force"
                             ) else (
                                 echo [INFO] fcli.exe ya existe en ${FCLI_HOME}
                             )
@@ -73,42 +74,36 @@ pipeline {
             }
         }
 
-        stage('Login to FoD') {
-            steps {
-                script {
-                    bat """
-                        "${env.FCLI_PATH}" fod session login ^
-                            --url ${params.FOD_URL} ^
-                            --client-id ${env.FOD_CLIENT_ID} ^
-                            --client-secret ${env.FOD_CLIENT_SECRET} ^
-                            --session sca-session
-                    """
-                }
-            }
-        }
-
         stage('FoD SCA (OSS) Scan') {
             steps {
                 script {
-                    bat """
-                        "${env.FCLI_PATH}" fod oss scan start ^
-                            --release ${params.FOD_RELEASE_ID} ^
-                            --build-tool ${params.BUILD_TOOL} ^
-                            --output-file ${params.SCA_OUTPUT} ^
-                            --session sca-session ^
-                            --wait-for-results ${params.SCAN_TIMEOUT_MINUTES}
-                    """
-                }
-            }
-        }
+                    withCredentials([
+                        string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
+                        string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
+                    ]) {
+                        bat """
+                            @echo off
+                            echo [INFO] Logging into FoD...
+                            "${env.FCLI_PATH}" fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session sca-session
 
-        stage('Export OSS Results') {
-            steps {
-                script {
-                    bat """
-                        echo Exportando resultados OSS a ${params.SCA_OUTPUT}
-                        type ${params.SCA_OUTPUT} || echo No se generó archivo de resultados.
-                    """
+                            echo [INFO] Starting OSS Scan...
+                            "${env.FCLI_PATH}" fod oss scan start --rel "${params.FOD_RELEASE_ID}" --file target\\iwa.jar --fod-session sca-session > sca_output.txt
+
+                            echo [INFO] Logging out...
+                            "${env.FCLI_PATH}" fod session logout --fod-session sca-session
+                        """
+
+                        def scanOutput = readFile('sca_output.txt')
+                        echo "Scan Output:\n${scanOutput}"
+
+                        // Extraer Scan ID del output
+                        GLOBAL_SCAN_ID = extractScanId(scanOutput)
+                        if (!GLOBAL_SCAN_ID) {
+                            error "❌ No se pudo extraer el Scan ID del output"
+                        }
+                        echo "✅ Scan ID capturado: ${GLOBAL_SCAN_ID}"
+                        currentBuild.displayName = "#${BUILD_NUMBER} - SCA ${GLOBAL_SCAN_ID}"
+                    }
                 }
             }
         }
@@ -116,11 +111,15 @@ pipeline {
 
     post {
         always {
-            script {
-                echo "=== RESUMEN EJECUCIÓN SCA ==="
-                echo "   Status: ${currentBuild.currentResult}"
-                echo "   SCA Results File: ${params.SCA_OUTPUT}"
-            }
+            echo "=== RESUMEN EJECUCIÓN SCA ==="
+            echo "Status: ${currentBuild.currentResult}"
+            echo "SCA Results File: sca_output.txt"
         }
     }
+}
+
+// Función helper para extraer Scan ID
+def extractScanId(output) {
+    def matcher = output =~ /Scan ID:\s*(\d+)/
+    return matcher ? matcher[0][1] : null
 }
