@@ -4,20 +4,20 @@ pipeline {
     agent any
 
     parameters {
-        booleanParam(name: 'FOD_SCA', defaultValue: true,
-            description: 'Run Fortify on Demand SCA (Open Source Scan) using fcli')
-        string(name: 'FOD_URL', defaultValue: 'https://api.ams.fortify.com', 
+        string(name: 'FOD_URL', defaultValue: 'https://api.ams.fortify.com',
             description: 'FoD API URL')
-        string(name: 'FOD_TENANT', defaultValue: '', 
-            description: 'FoD Tenant ID')
-        string(name: 'FOD_USER', defaultValue: '', 
-            description: 'FoD Username (email)')
-        password(name: 'FOD_PASSWORD', defaultValue: '', 
-            description: 'FoD Password')
-        string(name: 'FOD_RELEASE_ID', defaultValue: '', 
-            description: 'FoD Release ID to associate scan with')
-        string(name: 'FCLI_VERSION', defaultValue: 'latest',
-            description: 'Version of Fortify CLI (fcli) to use')
+        string(name: 'FOD_RELEASE_ID', defaultValue: '1388854',
+            description: 'FoD Release ID')
+        string(name: 'CRITICAL_THRESHOLD', defaultValue: '10',
+            description: 'Fail pipeline if critical issues exceed this count')
+        string(name: 'HIGH_THRESHOLD', defaultValue: '10',
+            description: 'Fail pipeline if high issues exceed this count')
+        string(name: 'SCAN_TIMEOUT_MINUTES', defaultValue: '120',
+            description: 'Timeout in minutes for single wait-for attempt')
+        string(name: 'WAIT_RETRIES', defaultValue: '2',
+            description: 'Number of additional wait-for retry attempts (after the first one)')
+        string(name: 'WAIT_RETRY_DELAY_MINUTES', defaultValue: '2',
+            description: 'Minutes to wait between retries')
     }
 
     environment {
