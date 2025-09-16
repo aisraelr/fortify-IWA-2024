@@ -102,17 +102,30 @@ pipeline {
                                 "${env.FCLI_HOME}\\fcli.exe" fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
 
                                 echo [INFO] Waiting for OSS Scan ${GLOBAL_SCAN_ID}...
-                                "${env.FCLI_HOME}\\fcli.exe" fod oss-scan wait-for ${GLOBAL_SCAN_ID} --fod-session jenkins --timeout ${params.SCAN_TIMEOUT_MINUTES}m --output json > last-oss-scan.json
+                                "${env.FCLI_HOME}\\fcli.exe" fod oss-scan wait-for ${GLOBAL_SCAN_ID} --fod-session jenkins --timeout ${params.SCAN_TIMEOUT_MINUTES}m --output json > last-oss-scan.txt
 
                                 echo [INFO] Logging out...
                                 "${env.FCLI_HOME}\\fcli.exe" fod session logout --fod-session jenkins
                             """, returnStatus: true)
 
-                            if (rc == 0) { success = true; break }
-                            else if (attempt < maxAttempts) { sleep time: delayMin, unit: 'MINUTES' }
+                            if (rc == 0) {
+                                // Verificar si contiene JSON válido
+                                def raw = readFile('last-oss-scan.txt')
+                                def jsonStart = raw.indexOf('{')
+                                def jsonEnd = raw.lastIndexOf('}') + 1
+                                if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                                    writeFile file: 'last-oss-scan.json', text: raw.substring(jsonStart, jsonEnd)
+                                    success = true
+                                    break
+                                } else {
+                                    echo "⚠️ JSON no válido aún, reintentando..."
+                                }
+                            }
+
+                            if (attempt < maxAttempts) sleep time: delayMin, unit: 'MINUTES'
                         }
 
-                        if (!success) error "❌ OSS Scan no finalizó después de ${maxAttempts} intentos."
+                        if (!success) error "❌ OSS Scan no completó correctamente después de ${maxAttempts} intentos."
                     }
                 }
             }
@@ -124,11 +137,12 @@ pipeline {
                     if (!fileExists('last-oss-scan.json')) error "❌ No se encontró last-oss-scan.json"
                     def scanResults = readJSON file: 'last-oss-scan.json'
                     echo "📊 OSS Scan Status: ${scanResults.analysisStatusType}"
-                    echo "   Critical Issues: ${scanResults.issueCountCritical}"
-                    echo "   High Issues: ${scanResults.issueCountHigh}"
+                    echo "   Critical Issues: ${scanResults.issueCountCritical ?: 0}"
+                    echo "   High Issues: ${scanResults.issueCountHigh ?: 0}"
                 }
             }
         }
+
 
 
 
