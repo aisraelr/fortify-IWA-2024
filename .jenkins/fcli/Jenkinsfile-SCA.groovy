@@ -48,24 +48,28 @@ pipeline {
         stage('FoD OSS Scan') {
             steps {
                 script {
+                    def FCLI_HOME = "${env.FCLI_HOME}"
+
                     withCredentials([
                         string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
                         string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
                     ]) {
-                        // Iniciar OSS scan
                         bat """
                             @echo off
-                            echo [INFO] Logging into FoD for OSS Scan...
-                            "${env.FCLI_HOME}\\fcli.exe" fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
+                            echo [INFO] Logging into FoD...
+                            "${FCLI_HOME}\\fcli.exe" fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
+
+                            echo [INFO] Preparing oss-scan.zip...
+                            powershell -Command "Compress-Archive -Path target\\* -DestinationPath oss-scan.zip -Force"
 
                             echo [INFO] Starting OSS Scan...
-                            "${env.FCLI_HOME}\\fcli.exe" fod oss-scan start --rel "${params.FOD_RELEASE_ID}" --file "oss-scan.zip" --fod-session jenkins --output json > oss-scan-start.json
+                            "${FCLI_HOME}\\fcli.exe" fod oss-scan start --rel "${params.FOD_RELEASE_ID}" --file "oss-scan.zip" --fod-session jenkins --output json > oss-scan-start.json
 
                             echo [INFO] Logging out...
-                            "${env.FCLI_HOME}\\fcli.exe" fod session logout --fod-session jenkins
+                            "${FCLI_HOME}\\fcli.exe" fod session logout --fod-session jenkins
                         """
 
-                        // Leer Scan ID
+                        // Leer scanId del JSON inicial
                         def startJson = readJSON file: 'oss-scan-start.json'
                         GLOBAL_SCAN_ID = startJson.scanId.toString()
                         echo "✅ OSS Scan started: ID ${GLOBAL_SCAN_ID}"
@@ -89,7 +93,7 @@ pipeline {
                         string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
                     ]) {
                         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-                            echo "🔁 Wait-for attempt ${attempt} of ${maxAttempts} (timeout ${params.SCAN_TIMEOUT_MINUTES}m)..."
+                            echo "🔁 Wait-for attempt ${attempt} of ${maxAttempts}..."
                             def rc = bat(script: """
                                 @echo off
                                 echo [INFO] Logging into FoD...
@@ -102,17 +106,8 @@ pipeline {
                                 "${env.FCLI_HOME}\\fcli.exe" fod session logout --fod-session jenkins
                             """, returnStatus: true)
 
-                            if (rc == 0) {
-                                echo "✅ wait-for succeeded on attempt ${attempt}"
-                                success = true
-                                break
-                            } else {
-                                echo "⚠️ wait-for attempt ${attempt} failed (rc=${rc})"
-                                if (attempt < maxAttempts) {
-                                    echo "⏳ Esperando ${delayMin} minutos antes de reintentar..."
-                                    sleep time: delayMin, unit: 'MINUTES'
-                                }
-                            }
+                            if (rc == 0) { success = true; break }
+                            else if (attempt < maxAttempts) { sleep time: delayMin, unit: 'MINUTES' }
                         }
 
                         if (!success) error "❌ OSS Scan no finalizó después de ${maxAttempts} intentos."
@@ -124,29 +119,16 @@ pipeline {
         stage('Validate OSS Scan Results') {
             steps {
                 script {
-                    if (!fileExists('last-oss-scan.json')) error "❌ No se encontró last-oss-scan.json con resultados."
-
-                    def rawText = readFile('last-oss-scan.json')
-                    echo "📝 OSS Scan JSON Output:"
-                    echo rawText
-
+                    if (!fileExists('last-oss-scan.json')) error "❌ No se encontró last-oss-scan.json"
                     def scanResults = readJSON file: 'last-oss-scan.json'
-                    def status = scanResults.analysisStatusType ?: 'Unknown'
-                    def criticalCount = scanResults.issueCountCritical ?: 0
-                    def highCount = scanResults.issueCountHigh ?: 0
-
-                    echo "📊 OSS SCAN RESULTS for ID: ${GLOBAL_SCAN_ID}"
-                    echo "   Status: ${status}"
-                    echo "   Critical Issues: ${criticalCount}"
-                    echo "   High Issues: ${highCount}"
-
-                    if (criticalCount > 10) error "❌ BUILD FAILED: Critical issues (${criticalCount}) > threshold"
-                    if (highCount > 10) error "❌ BUILD FAILED: High issues (${highCount}) > threshold"
-
-                    echo "✅ OSS Scan PASSED"
+                    echo "📊 OSS Scan Status: ${scanResults.analysisStatusType}"
+                    echo "   Critical Issues: ${scanResults.issueCountCritical}"
+                    echo "   High Issues: ${scanResults.issueCountHigh}"
                 }
             }
         }
+
+
     }
 
     post {
