@@ -4,7 +4,7 @@ pipeline {
     agent any
 
     parameters {
-        // === Parámetros homologados con SAST ===
+        // === Homologados con SAST ===
         booleanParam(name: 'FOD_SCA', defaultValue: true,
             description: 'Run Fortify on Demand SCA (OSS) scan using fcli')
         string(name: 'FOD_URL', defaultValue: 'https://api.ams.fortify.com',
@@ -18,7 +18,7 @@ pipeline {
         string(name: 'FOD_RELEASE_ID', defaultValue: '',
             description: 'FoD Release ID for the application to scan')
 
-        // === Parámetros adicionales solo para OSS/SCA ===
+        // === Específicos de SCA ===
         string(name: 'BUILD_TOOL', defaultValue: 'maven',
             description: 'Build tool for dependency resolution (maven/gradle/npm/yarn)')
         string(name: 'SCA_OUTPUT', defaultValue: 'sca-results.json',
@@ -26,18 +26,19 @@ pipeline {
     }
 
     environment {
-        FCLI_HOME = "${env.WORKSPACE}/fcli"
+        FCLI_HOME = "${env.WORKSPACE}\\fcli"
     }
 
     stages {
         stage('Setup fcli') {
             steps {
                 script {
-                    if (!fileExists("${FCLI_HOME}/fcli")) {
+                    if (!fileExists("${FCLI_HOME}\\fcli.cmd")) {
                         echo "Descargando Fortify CLI (fcli)..."
-                        sh """
-                            mkdir -p ${FCLI_HOME}
-                            curl -sL https://github.com/fortify/fcli/releases/latest/download/fcli-linux.tgz | tar xz -C ${FCLI_HOME}
+                        bat """
+                            if not exist ${FCLI_HOME} mkdir ${FCLI_HOME}
+                            powershell -Command "Invoke-WebRequest -Uri https://github.com/fortify/fcli/releases/latest/download/fcli-windows.zip -OutFile ${FCLI_HOME}\\fcli.zip"
+                            powershell -Command "Expand-Archive -Path ${FCLI_HOME}\\fcli.zip -DestinationPath ${FCLI_HOME} -Force"
                         """
                     } else {
                         echo "fcli ya existe en ${FCLI_HOME}, usando caché local."
@@ -49,12 +50,12 @@ pipeline {
         stage('Login to FoD') {
             steps {
                 script {
-                    sh """
-                        ${FCLI_HOME}/fcli fod session login \
-                            --url ${params.FOD_URL} \
-                            --tenant ${params.FOD_TENANT} \
-                            --user ${params.FOD_USER} \
-                            --password '${params.FOD_PASSWORD}' \
+                    bat """
+                        ${FCLI_HOME}\\fcli.cmd fod session login ^
+                            --url ${params.FOD_URL} ^
+                            --tenant ${params.FOD_TENANT} ^
+                            --user ${params.FOD_USER} ^
+                            --password "${params.FOD_PASSWORD}" ^
                             --session sca-session
                     """
                 }
@@ -67,12 +68,12 @@ pipeline {
             }
             steps {
                 script {
-                    sh """
-                        ${FCLI_HOME}/fcli fod oss scan start \
-                            --release ${params.FOD_RELEASE_ID} \
-                            --build-tool ${params.BUILD_TOOL} \
-                            --output-file ${params.SCA_OUTPUT} \
-                            --session sca-session \
+                    bat """
+                        ${FCLI_HOME}\\fcli.cmd fod oss scan start ^
+                            --release ${params.FOD_RELEASE_ID} ^
+                            --build-tool ${params.BUILD_TOOL} ^
+                            --output-file ${params.SCA_OUTPUT} ^
+                            --session sca-session ^
                             --wait
                     """
                 }
@@ -82,9 +83,9 @@ pipeline {
         stage('Export OSS Results') {
             steps {
                 script {
-                    sh """
-                        echo "Exportando resultados OSS a ${params.SCA_OUTPUT}"
-                        cat ${params.SCA_OUTPUT} || echo "No se generó archivo de resultados."
+                    bat """
+                        echo Exportando resultados OSS a ${params.SCA_OUTPUT}
+                        type ${params.SCA_OUTPUT} || echo No se generó archivo de resultados.
                     """
                 }
             }
