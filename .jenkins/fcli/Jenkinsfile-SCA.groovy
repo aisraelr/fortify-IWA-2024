@@ -32,18 +32,17 @@ pipeline {
             }
             steps {
                 script {
-                    // Create folders if needed
-                    sh "mkdir -p ${FCLI_HOME}"
-                    sh "mkdir -p ${SCAN_RESULTS}"
+                    // Crear carpetas
+                    bat "if not exist ${FCLI_HOME} mkdir ${FCLI_HOME}"
+                    bat "if not exist ${SCAN_RESULTS} mkdir ${SCAN_RESULTS}"
 
-                    // Download fcli if not present
-                    if (!fileExists("${FCLI_HOME}/fcli")) {
+                    // Descargar fcli si no existe
+                    if (!fileExists("${FCLI_HOME}\\fcli.exe")) {
                         echo "Downloading fcli..."
-                        def fcliUrl = "https://github.com/fortify/fcli/releases/${params.FCLI_VERSION}/download/fcli.zip"
-                        sh """
-                            curl -L -o ${FCLI_HOME}/fcli.zip ${fcliUrl}
-                            unzip -o ${FCLI_HOME}/fcli.zip -d ${FCLI_HOME}
-                            chmod +x ${FCLI_HOME}/fcli
+                        def fcliUrl = "https://github.com/fortify/fcli/releases/download/${params.FCLI_VERSION}/fcli.zip"
+                        bat """
+                            powershell -command "Invoke-WebRequest -Uri ${fcliUrl} -OutFile ${FCLI_HOME}\\fcli.zip"
+                            powershell -command "Expand-Archive -Force ${FCLI_HOME}\\fcli.zip -DestinationPath ${FCLI_HOME}"
                         """
                     } else {
                         echo "fcli already exists in ${FCLI_HOME}"
@@ -51,6 +50,7 @@ pipeline {
                 }
             }
         }
+
 
         stage('FoD Authentication') {
             when {
