@@ -27,18 +27,27 @@ pipeline {
 
     environment {
         FCLI_HOME = "${env.WORKSPACE}\\fcli"
+        FCLI_EXE  = "${env.WORKSPACE}\\fcli\\fcli.cmd"
     }
 
     stages {
         stage('Setup fcli') {
             steps {
                 script {
-                    if (!fileExists("${FCLI_HOME}\\fcli.cmd")) {
+                    if (!fileExists(env.FCLI_EXE)) {
                         echo "Descargando Fortify CLI (fcli)..."
                         bat """
                             if not exist ${FCLI_HOME} mkdir ${FCLI_HOME}
                             powershell -Command "Invoke-WebRequest -Uri https://github.com/fortify/fcli/releases/latest/download/fcli-windows.zip -OutFile ${FCLI_HOME}\\fcli.zip"
                             powershell -Command "Expand-Archive -Path ${FCLI_HOME}\\fcli.zip -DestinationPath ${FCLI_HOME} -Force"
+                            del ${FCLI_HOME}\\fcli.zip
+                        """
+                        // mover el .cmd a la raíz de FCLI_HOME para simplificar
+                        bat """
+                            for /d %%D in (${FCLI_HOME}\\fcli-*-windows) do (
+                                move %%D\\* ${FCLI_HOME}\\
+                                rmdir /s /q %%D
+                            )
                         """
                     } else {
                         echo "fcli ya existe en ${FCLI_HOME}, usando caché local."
@@ -51,7 +60,7 @@ pipeline {
             steps {
                 script {
                     bat """
-                        ${FCLI_HOME}\\fcli.cmd fod session login ^
+                        ${env.FCLI_EXE} fod session login ^
                             --url ${params.FOD_URL} ^
                             --tenant ${params.FOD_TENANT} ^
                             --user ${params.FOD_USER} ^
@@ -69,7 +78,7 @@ pipeline {
             steps {
                 script {
                     bat """
-                        ${FCLI_HOME}\\fcli.cmd fod oss scan start ^
+                        ${env.FCLI_EXE} fod oss scan start ^
                             --release ${params.FOD_RELEASE_ID} ^
                             --build-tool ${params.BUILD_TOOL} ^
                             --output-file ${params.SCA_OUTPUT} ^
@@ -85,7 +94,8 @@ pipeline {
                 script {
                     bat """
                         echo Exportando resultados OSS a ${params.SCA_OUTPUT}
-                        type ${params.SCA_OUTPUT} || echo No se generó archivo de resultados.
+                        if exist ${params.SCA_OUTPUT} type ${params.SCA_OUTPUT} 
+                        if not exist ${params.SCA_OUTPUT} echo No se generó archivo de resultados.
                     """
                 }
             }
