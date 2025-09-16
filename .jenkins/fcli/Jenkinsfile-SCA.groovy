@@ -63,15 +63,17 @@ pipeline {
                             powershell -Command "Compress-Archive -Path target\\* -DestinationPath oss-scan.zip -Force"
 
                             echo [INFO] Starting OSS Scan...
-                            "${FCLI_HOME}\\fcli.exe" fod oss-scan start --rel "${params.FOD_RELEASE_ID}" --file "oss-scan.zip" --fod-session jenkins --output json > oss-scan-start.json
+                            "${FCLI_HOME}\\fcli.exe" fod oss-scan start --rel "${params.FOD_RELEASE_ID}" --file "oss-scan.zip" --fod-session jenkins --output json > oss-scan-start.txt
 
                             echo [INFO] Logging out...
                             "${FCLI_HOME}\\fcli.exe" fod session logout --fod-session jenkins
                         """
 
-                        // Leer scanId del JSON inicial
-                        def startJson = readJSON file: 'oss-scan-start.json'
-                        GLOBAL_SCAN_ID = startJson.scanId.toString()
+                        // Extraer scanId del stdout (texto plano)
+                        def startText = readFile('oss-scan-start.txt')
+                        def matcher = startText =~ /"scanId"\s*:\s*(\d+)/
+                        if (!matcher) error "❌ No se pudo extraer scanId de oss-scan-start.txt"
+                        GLOBAL_SCAN_ID = matcher[0][1]
                         echo "✅ OSS Scan started: ID ${GLOBAL_SCAN_ID}"
                     }
                 }
@@ -127,6 +129,7 @@ pipeline {
                 }
             }
         }
+
 
 
     }
