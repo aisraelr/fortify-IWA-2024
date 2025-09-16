@@ -5,18 +5,16 @@ pipeline {
 
     parameters {
         // === Homologados con SAST ===
-        booleanParam(name: 'FOD_SCA', defaultValue: true,
-            description: 'Run Fortify on Demand SCA (OSS) scan using fcli')
         string(name: 'FOD_URL', defaultValue: 'https://api.ams.fortify.com',
             description: 'FoD API URL')
-        string(name: 'FOD_TENANT', defaultValue: '',
-            description: 'FoD tenant name')
-        string(name: 'FOD_USER', defaultValue: '',
-            description: 'FoD user name')
-        password(name: 'FOD_PASSWORD', defaultValue: '',
-            description: 'FoD password or PAT')
-        string(name: 'FOD_RELEASE_ID', defaultValue: '',
-            description: 'FoD Release ID for the application to scan')
+        string(name: 'FOD_RELEASE_ID', defaultValue: '1388854',
+            description: 'FoD Release ID')
+        string(name: 'SCAN_TIMEOUT_MINUTES', defaultValue: '120',
+            description: 'Timeout in minutes for single wait-for attempt')
+        string(name: 'WAIT_RETRIES', defaultValue: '2',
+            description: 'Number of additional wait-for retry attempts (after the first one)')
+        string(name: 'WAIT_RETRY_DELAY_MINUTES', defaultValue: '2',
+            description: 'Minutes to wait between retries')
 
         // === Específicos de SCA ===
         string(name: 'BUILD_TOOL', defaultValue: 'maven',
@@ -26,32 +24,51 @@ pipeline {
     }
 
     environment {
-        FCLI_HOME = "${env.WORKSPACE}\\fcli"
-        FCLI_EXE  = "${env.WORKSPACE}\\fcli\\fcli.cmd"
+        APP_NAME       = "IWA-JAVA-2024"
+        APP_VERSION    = "Github-2025"
+        FOD_CLIENT_ID     = credentials('iwa-fod-client-id')
+        FOD_CLIENT_SECRET = credentials('iwa-fod-client-secret')
+        GIT_URL        = "https://github.com/aisraelr/fortify-IWA-2024.git"
+        GIT_REPO_NAME  = "fortify-IWA-2024"
     }
 
     stages {
-        stage('Setup fcli') {
+        stage('Initialize') {
             steps {
                 script {
-                    if (!fileExists(env.FCLI_EXE)) {
-                        echo "Descargando Fortify CLI (fcli)..."
+                    env.GIT_COMMIT = bat(script: "git rev-parse HEAD", returnStdout: true).trim()
+                    env.GIT_BRANCH = bat(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
+                    env.SCAN_TIMEOUT_MINUTES_INT = params.SCAN_TIMEOUT_MINUTES.toInteger()
+                }
+            }
+        }
+
+        stage('Prepare fcli') {
+            steps {
+                script {
+                    def LOCAL_FCLI = "C:\\tools\\fcli\\fcli.exe"
+                    def FCLI_HOME = "${env.WORKSPACE}\\fcli"
+                    def FCLI_EXE = "${FCLI_HOME}\\fcli.exe"
+
+                    if (fileExists(LOCAL_FCLI)) {
+                        echo "[INFO] Usando fcli preinstalado en ${LOCAL_FCLI}"
+                        env.FCLI_PATH = LOCAL_FCLI
+                    } else {
+                        echo "[INFO] Validando fcli en workspace..."
                         bat """
-                            if not exist ${FCLI_HOME} mkdir ${FCLI_HOME}
-                            powershell -Command "Invoke-WebRequest -Uri https://github.com/fortify/fcli/releases/latest/download/fcli-windows.zip -OutFile ${FCLI_HOME}\\fcli.zip"
-                            powershell -Command "Expand-Archive -Path ${FCLI_HOME}\\fcli.zip -DestinationPath ${FCLI_HOME} -Force"
-                            del ${FCLI_HOME}\\fcli.zip
-                        """
-                        // mover el .cmd a la raíz de FCLI_HOME para simplificar
-                        bat """
-                            for /d %%D in (${FCLI_HOME}\\fcli-*-windows) do (
-                                move %%D\\* ${FCLI_HOME}\\
-                                rmdir /s /q %%D
+                            @echo off
+                            if not exist "${FCLI_HOME}" mkdir "${FCLI_HOME}"
+                            if not exist "${FCLI_EXE}" (
+                                echo [INFO] Descargando fcli...
+                                curl -L https://github.com/fortify/fcli/releases/download/v3.8.1/fcli-windows.zip -o "${FCLI_HOME}\\fcli-windows.zip"
+                                tar -xf "${FCLI_HOME}\\fcli-windows.zip" -C "${FCLI_HOME}" fcli.exe
+                            ) else (
+                                echo [INFO] fcli.exe ya existe en ${FCLI_HOME}
                             )
                         """
-                    } else {
-                        echo "fcli ya existe en ${FCLI_HOME}, usando caché local."
+                        env.FCLI_PATH = FCLI_EXE
                     }
+                    echo "[INFO] fcli en uso: ${env.FCLI_PATH}"
                 }
             }
         }
@@ -60,11 +77,10 @@ pipeline {
             steps {
                 script {
                     bat """
-                        ${env.FCLI_EXE} fod session login ^
+                        "${env.FCLI_PATH}" fod session login ^
                             --url ${params.FOD_URL} ^
-                            --tenant ${params.FOD_TENANT} ^
-                            --user ${params.FOD_USER} ^
-                            --password "${params.FOD_PASSWORD}" ^
+                            --client-id ${env.FOD_CLIENT_ID} ^
+                            --client-secret ${env.FOD_CLIENT_SECRET} ^
                             --session sca-session
                     """
                 }
@@ -72,18 +88,15 @@ pipeline {
         }
 
         stage('FoD SCA (OSS) Scan') {
-            when {
-                expression { params.FOD_SCA == true }
-            }
             steps {
                 script {
                     bat """
-                        ${env.FCLI_EXE} fod oss scan start ^
+                        "${env.FCLI_PATH}" fod oss scan start ^
                             --release ${params.FOD_RELEASE_ID} ^
                             --build-tool ${params.BUILD_TOOL} ^
                             --output-file ${params.SCA_OUTPUT} ^
                             --session sca-session ^
-                            --wait
+                            --wait-for-results ${params.SCAN_TIMEOUT_MINUTES}
                     """
                 }
             }
@@ -94,8 +107,7 @@ pipeline {
                 script {
                     bat """
                         echo Exportando resultados OSS a ${params.SCA_OUTPUT}
-                        if exist ${params.SCA_OUTPUT} type ${params.SCA_OUTPUT} 
-                        if not exist ${params.SCA_OUTPUT} echo No se generó archivo de resultados.
+                        type ${params.SCA_OUTPUT} || echo No se generó archivo de resultados.
                     """
                 }
             }
