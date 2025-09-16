@@ -77,36 +77,46 @@ pipeline {
         stage('FoD SCA (OSS) Scan') {
             steps {
                 script {
+                    def FCLI_HOME = "${env.WORKSPACE}\\fcli"
+
                     withCredentials([
                         string(credentialsId: 'iwa-fod-client-id', variable: 'FOD_CLIENT_ID'),
                         string(credentialsId: 'iwa-fod-client-secret', variable: 'FOD_CLIENT_SECRET')
                     ]) {
                         bat """
                             @echo off
-                            echo [INFO] Logging into FoD...
-                            "${env.FCLI_PATH}" fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session sca-session
+                            echo [INFO] Logging into FoD for OSS Scan...
+                            "${FCLI_HOME}\\fcli.exe" fod session login --client-id "%FOD_CLIENT_ID%" --client-secret "%FOD_CLIENT_SECRET%" --url "${params.FOD_URL}" --fod-session jenkins
 
                             echo [INFO] Starting OSS Scan...
-                            "${env.FCLI_PATH}" fod oss scan start --rel "${params.FOD_RELEASE_ID}" --file target\\iwa.jar --fod-session sca-session > sca_output.txt
+                            "${FCLI_HOME}\\fcli.exe" fod oss-scan start --rel "${params.FOD_RELEASE_ID}" --file "oss-scan.zip" --fod-session jenkins --output json > oss-scan-output.json
 
                             echo [INFO] Logging out...
-                            "${env.FCLI_PATH}" fod session logout --fod-session sca-session
+                            "${FCLI_HOME}\\fcli.exe" fod session logout --fod-session jenkins
                         """
 
-                        def scanOutput = readFile('sca_output.txt')
-                        echo "Scan Output:\n${scanOutput}"
+                        // Leer resultados
+                        if (fileExists('oss-scan-output.json')) {
+                            def ossResults = readFile('oss-scan-output.json')
+                            echo "OSS Scan Output:\n${ossResults}"
 
-                        // Extraer Scan ID del output
-                        GLOBAL_SCAN_ID = extractScanId(scanOutput)
-                        if (!GLOBAL_SCAN_ID) {
-                            error "❌ No se pudo extraer el Scan ID del output"
+                            // Extraer Scan ID del JSON si es necesario
+                            def json = readJSON text: ossResults
+                            GLOBAL_SCAN_ID = json?.scanId ?: null
+                            if (!GLOBAL_SCAN_ID) {
+                                echo "⚠️ No se pudo extraer el Scan ID del output"
+                            } else {
+                                echo "✅ Scan ID capturado: ${GLOBAL_SCAN_ID}"
+                                currentBuild.displayName = "#${BUILD_NUMBER} - SCA ${GLOBAL_SCAN_ID}"
+                            }
+                        } else {
+                            error "❌ No se generó oss-scan-output.json"
                         }
-                        echo "✅ Scan ID capturado: ${GLOBAL_SCAN_ID}"
-                        currentBuild.displayName = "#${BUILD_NUMBER} - SCA ${GLOBAL_SCAN_ID}"
                     }
                 }
             }
         }
+
     }
 
     post {
