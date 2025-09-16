@@ -11,7 +11,7 @@ pipeline {
             description: 'FoD API URL')
         string(name: 'FOD_RELEASE_ID', defaultValue: '1388854',
             description: 'FoD Release ID')
-        string(name: 'CRITICAL_THRESHOLD', defaultValue: '0',
+        string(name: 'CRITICAL_THRESHOLD', defaultValue: '10',
             description: 'Fail pipeline if critical issues exceed this count')
         string(name: 'HIGH_THRESHOLD', defaultValue: '10',
             description: 'Fail pipeline if high issues exceed this count')
