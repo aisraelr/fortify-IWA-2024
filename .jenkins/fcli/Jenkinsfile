@@ -92,7 +92,7 @@ pipeline {
                         @echo off
                         echo [INFO] Generando paquete OSS con ScanCentral...
                         if exist oss-scan.zip del oss-scan.zip
-                        scancentral.bat package -bt mvn -oss -o oss-scan.zip
+                        scancentral.bat package -bt mvn -oss -o "C:\\oss-package.zip"
 
                         echo [INFO] Respaldando oss-scan.zip en C:\\
                         copy /Y oss-scan.zip C:\\oss-scan.zip
