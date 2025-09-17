@@ -32,15 +32,15 @@ pipeline {
             }
         }
 
-        stage('Prepare OSS Package') {
+        stage('Prepare OSS Zip') {
             steps {
                 script {
                     bat """
                         @echo off
-                        echo [INFO] Generando paquete OSS con ScanCentral...
-                        if exist oss-scan.zip del oss-scan.zip
-                        scancentral.bat package -bt mvn -oss -o "C:\\oss-package.zip" 
+                        if exist oss-scan.zip del /f /q oss-scan.zip
+                        powershell -Command "Compress-Archive -Path target\\* -DestinationPath oss-scan.zip -Force"
                     """
+                    if (!fileExists('oss-scan.zip')) error "❌ No se pudo generar oss-scan.zip"
                 }
             }
         }
