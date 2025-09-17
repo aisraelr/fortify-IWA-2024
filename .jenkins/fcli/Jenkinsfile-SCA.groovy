@@ -132,23 +132,24 @@ pipeline {
         }
 
         stage('Validate OSS Scan Results') {
-            script {
-                if (fileExists('last-oss-scan.json')) {
-                    def scanResults = readJSON file: 'last-oss-scan.json'
+            steps {
+                script {
+                    if (fileExists('last-oss-scan.json')) {
+                        def scanResults = readJSON file: 'last-oss-scan.json'
 
-                    // Extraer el ScanId del JSON
-                    def scanId = scanResults?.scanId ?: "N/A"
+                        // Extraer el ScanId del JSON
+                        def scanId = scanResults?.scanId ?: "N/A"
 
-                    // Formatear fecha actual
-                    def now = new Date().format("MMM dd, yyyy, h:mm:ss a", TimeZone.getTimeZone('UTC'))
+                        // Formatear fecha actual
+                        def now = new Date().format("MMM dd, yyyy, h:mm:ss a", TimeZone.getTimeZone('UTC'))
 
-                    // Cambiar displayName
-                    currentBuild.displayName = "#${env.BUILD_NUMBER} - OSS Scan ${scanId} (${now})"
-                } else {
-                    echo "⚠️ No se encontró last-oss-scan.json para actualizar el displayName."
+                        // Cambiar displayName
+                        currentBuild.displayName = "#${env.BUILD_NUMBER} - OSS Scan ${scanId} (${now})"
+                    } else {
+                        echo "⚠️ No se encontró last-oss-scan.json para actualizar el displayName."
+                    }
                 }
             }
-
         }
 
     }
