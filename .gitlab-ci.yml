@@ -1,20 +1,136 @@
-fortify_scan:
-  stage: security
-  image: openjdk:17
-  dependencies:
-    - package
-  script:
-    - echo "Descargando FoD Uploader..."
-    - curl -L -o fod-uploader.jar https://github.com/fortify/fortify-tools/releases/latest/download/fod-uploader.jar
+stages:
+  - build
+  - sast
+  - security_gate
 
-    - echo "Ejecutando scan en Fortify on Demand..."
-    - java -jar fod-uploader.jar \
-        -z fortify/app.zip \
-        -aurl https://api.ams.fortify.com \
-        -cid $FOD_CLIENT_ID \
-        -csec $FOD_CLIENT_SECRET \
-        -rid $FOD_RELEASE_ID \
-        -tc "GitLab Scan"
+variables:
+  # Valores por defecto (pueden ser sobreescritos por CI/CD variables)
+  CRITICAL_THRESHOLD: "50"
+  HIGH_THRESHOLD: "20"
+
+# ============================================================
+# STAGE 1 - BUILD (MANUAL)
+# ============================================================
+build:
+  stage: build
+  image: maven:3.9.9-eclipse-temurin-17
+
+  script:
+    - mvn clean install -DskipTests
+
+  artifacts:
+    paths:
+      - target/
 
   when: manual
+
+# ============================================================
+# STAGE 2 - FoD SAST (AUTO)
+# ============================================================
+fortify_sast:
+  stage: sast
+  image: fortifydocker/fortify-ci-tools:5.5.0-jdk-17
+
+  needs:
+    - job: build
+      artifacts: true
+
+  script:
+    - |
+      echo "FoD Login"
+      echo "URL: $FOD_URL"
+      echo "USER: $FOD_USER"
+      echo "FOD_PASSWORD length: ${#FOD_PASSWORD}"
+      echo "FOD_RELEASE_ID: $FOD_RELEASE_ID"
+      echo "TENANT: $FOD_TENANT"
+
+      fcli fod session login --url "$FOD_URL" --user "$FOD_USER" --password "$FOD_PASSWORD" -t "$FOD_TENANT"
+
+      echo "Packaging with ScanCentral"
+      scancentral package -bt mvn -o package.zip
+
+      echo "Start Scan"
+      fcli fod sast-scan start --rel "$FOD_RELEASE_ID" -f package.zip --store curScan
+
+      echo "Wait for Scan"
+      fcli fod sast-scan wait-for ::curScan:: --interval 30s
+
+      echo "FoD Logout"
+      fcli fod session logout
+
+  allow_failure: false
+
+# ============================================================
+# STAGE 3 - SECURITY GATE (AUTO)
+# ============================================================
+security_gate:
+  stage: security_gate
+  image: fortifydocker/fortify-ci-tools:5.5.0-jdk-17
+
+  needs:
+    - fortify_sast
+
+  script:
+    - |
+      echo "FoD Login"
+      echo "URL: $FOD_URL"
+      echo "USER: $FOD_USER"
+      echo "FOD_PASSWORD length: ${#FOD_PASSWORD}"
+      echo "FOD_RELEASE_ID: $FOD_RELEASE_ID"
+      echo "TENANT: $FOD_TENANT"
+
+      fcli fod session login --url "$FOD_URL" --user "$FOD_USER" --password "$FOD_PASSWORD" -t "$FOD_TENANT"
+
+      echo "Install jq"
+      apk add --no-cache jq || (apt-get update && apt-get install -y jq)
+
+      echo "Evaluating vulnerabilities..."
+
+      # ======================================================
+      # ✅ Fallback correcto (usa CI/CD variables si existen)
+      # ======================================================
+      CRITICAL_THRESHOLD=${_FCLI_CRITICAL_THRESHOLD:-$CRITICAL_THRESHOLD}
+      HIGH_THRESHOLD=${_FCLI_HIGH_THRESHOLD:-$HIGH_THRESHOLD}
+
+      # Por si vienen vacías explícitamente
+      [ -z "$CRITICAL_THRESHOLD" ] && CRITICAL_THRESHOLD=50
+      [ -z "$HIGH_THRESHOLD" ] && HIGH_THRESHOLD=20
+
+      echo "CRITICAL_THRESHOLD: $CRITICAL_THRESHOLD"
+      echo "HIGH_THRESHOLD: $HIGH_THRESHOLD"
+
+      # ======================================================
+      # Obtener vulnerabilidades
+      # ======================================================
+      critJson=$(fcli fod issue list --rel "$FOD_RELEASE_ID" --filters-param "severityString:Critical" -o json)
+      critCount=$(echo "$critJson" | jq length)
+      [ -z "$critCount" ] && critCount=0
+
+      highJson=$(fcli fod issue list --rel "$FOD_RELEASE_ID" --filters-param "severityString:High" -o json)
+      highCount=$(echo "$highJson" | jq length)
+      [ -z "$highCount" ] && highCount=0
+
+      echo "===================================="
+      echo "Critical Issues : $critCount"
+      echo "High Issues     : $highCount"
+      echo "Thresholds      : C=$CRITICAL_THRESHOLD H=$HIGH_THRESHOLD"
+      echo "===================================="
+
+      # ======================================================
+      # Security Gate
+      # ======================================================
+      fail=0
+      if [ "$critCount" -gt "$CRITICAL_THRESHOLD" ]; then fail=1; fi
+      if [ "$highCount" -gt "$HIGH_THRESHOLD" ]; then fail=1; fi
+
+      if [ "$fail" -eq 1 ]; then
+        echo "SECURITY GATE: FAILED"
+        exit 1
+      else
+        echo "SECURITY GATE: PASSED"
+      fi
+
+      echo "FoD Logout"
+      fcli fod session logout
+
   allow_failure: false
