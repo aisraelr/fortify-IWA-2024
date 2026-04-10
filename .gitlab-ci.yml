@@ -1,0 +1,20 @@
+fortify_scan:
+  stage: security
+  image: openjdk:17
+  dependencies:
+    - package
+  script:
+    - echo "Descargando FoD Uploader..."
+    - curl -L -o fod-uploader.jar https://github.com/fortify/fortify-tools/releases/latest/download/fod-uploader.jar
+
+    - echo "Ejecutando scan en Fortify on Demand..."
+    - java -jar fod-uploader.jar \
+        -z fortify/app.zip \
+        -aurl https://api.ams.fortify.com \
+        -cid $FOD_CLIENT_ID \
+        -csec $FOD_CLIENT_SECRET \
+        -rid $FOD_RELEASE_ID \
+        -tc "GitLab Scan"
+
+  when: manual
+  allow_failure: false
