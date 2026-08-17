@@ -28,6 +28,6 @@ steps:
     debricked -v
 
     echo ===== DIRECT PATH =====
-    "D:\DEV\Tools\cli_windows\debricked.exe" -v
-    C:\Temp\cli_windows_x86_64\debricked.exe scan .
+    debricked -v
+    debricked scan .
   displayName: 'Debricked scan with pre-installed CLI'
