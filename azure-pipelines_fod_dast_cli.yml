@@ -1,0 +1,105 @@
+trigger: none
+
+pr: none
+
+stages:
+- stage: FoD_DAST_WEB
+  displayName: 'Fortify on Demand - DAST WEB Scan'
+
+  jobs:
+  - job: FoD_DAST_WEB_Scan
+    displayName: 'Start FoD DAST WEB Scan'
+
+    pool:
+      name: Default
+      demands:
+      - agent.name -equals DESKTOP-DJKAGKC
+
+    steps:
+
+    # ============================================================
+    # Checkout
+    # ============================================================
+    - checkout: self
+      displayName: 'Checkout source code'
+
+    # ============================================================
+    # Verify FCLI
+    # ============================================================
+    - task: PowerShell@2
+      displayName: 'Verify FCLI'
+      inputs:
+        targetType: inline
+        script: |
+          Write-Host "Checking FCLI installation..."
+
+          $fcli = Get-Command fcli -ErrorAction SilentlyContinue
+
+          if (-not $fcli) {
+              Write-Error "fcli was not found in PATH."
+              exit 1
+          }
+
+          Write-Host "FCLI path: $($fcli.Source)"
+          fcli -V
+
+    # ============================================================
+    # Authenticate to Fortify on Demand
+    # ============================================================
+    - task: PowerShell@2
+      displayName: 'Authenticate to Fortify On Demand'
+      env:
+        FOD_TENANT: $(FOD_TENANT)
+        FOD_USER: $(FOD_USER)
+        FOD_PAT: $(FOD_PAT)
+      inputs:
+        targetType: inline
+        script: |
+          $ErrorActionPreference = "Stop"
+
+          $FOD_URL = "https://ams.fortify.com"
+
+          if ([string]::IsNullOrWhiteSpace($env:FOD_TENANT)) {
+              throw "FOD_TENANT is not configured."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:FOD_USER)) {
+              throw "FOD_USER is not configured."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:FOD_PAT)) {
+              throw "FOD_PAT is not configured."
+          }
+
+          Write-Host "Authenticating to Fortify on Demand..."
+          Write-Host "URL: $FOD_URL"
+          Write-Host "Tenant: $env:FOD_TENANT"
+          Write-Host "User: $env:FOD_USER"
+
+          fcli fod session login `
+            --url "$FOD_URL" `
+            --tenant "$env:FOD_TENANT" `
+            --user "$env:FOD_USER" `
+            --password "$env:FOD_PAT"
+
+    # ============================================================
+    # Start DAST WEB Scan
+    # ============================================================
+    - task: PowerShell@2
+      displayName: 'Start FoD DAST WEB Scan'
+      env:
+        FOD_RELEASE: $(FOD_RELEASE)
+      inputs:
+        targetType: inline
+        script: |
+          $ErrorActionPreference = "Stop"
+
+          if ([string]::IsNullOrWhiteSpace($env:FOD_RELEASE)) {
+              throw "FOD_RELEASE is not configured."
+          }
+
+          Write-Host "Starting Fortify on Demand DAST WEB scan..."
+          Write-Host "Release: $env:FOD_RELEASE"
+
+          fcli fod dast start `
+            --release "$env:FOD_RELEASE"
