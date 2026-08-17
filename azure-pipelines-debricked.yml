@@ -12,5 +12,22 @@ steps:
 - script: |
     echo Running Debricked scan using pre-installed CLI
     set DEBRICKED_TOKEN=$(DEBRICKED_TOKEN)
+    echo ===== AGENT CONTEXT =====
+    whoami
+
+    echo ===== CURRENT DIRECTORY =====
+    cd
+
+    echo ===== PATH =====
+    echo %PATH%
+
+    echo ===== WHERE DEBRICKED =====
+    where.exe debricked
+
+    echo ===== DEBRICKED VERSION =====
+    debricked -v
+
+    echo ===== DIRECT PATH =====
+    "D:\DEV\Tools\cli_windows\debricked.exe" -v
     C:\Temp\cli_windows_x86_64\debricked.exe scan .
   displayName: 'Debricked scan with pre-installed CLI'
